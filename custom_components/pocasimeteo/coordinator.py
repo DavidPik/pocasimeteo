@@ -8,6 +8,7 @@ from datetime import timedelta
 import aiohttp
 import async_timeout
 
+from homeassistant.helpers import aiohttp_client
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -45,13 +46,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self):
         """Fetch data from PočasíMeteo API."""
         try:
-            async with async_timeout.timeout(20):
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(self.api_url, timeout=15) as response:
-                        if response.status != 200:
-                            raise UpdateFailed(f"API returned HTTP {response.status}")
+            session = aiohttp_client.async_get_clientsession(self.hass)
 
-                        raw = await response.json()
+            async with async_timeout.timeout(20):
+                async with session.get(self.api_url, timeout=15) as response:
+                    if response.status != 200:
+                        raise UpdateFailed(f"API returned HTTP {response.status}")
+
+                    raw = await response.json()
 
         except Exception as err:
             raise UpdateFailed(f"Error communicating with API: {err}") from err
