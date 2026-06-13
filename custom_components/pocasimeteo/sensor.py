@@ -40,7 +40,7 @@ SENSOR_DEFINITIONS = {
     "SrazkyDen": (UnitOfPrecipitationDepth.MILLIMETERS, SensorDeviceClass.PRECIPITATION),
     "rainIntensity": ("mm/5min", None),
     "SlunZareni": (UnitOfIrradiance.WATTS_PER_SQUARE_METER, SensorDeviceClass.ILLUMINANCE),
-    "UVindex": (None, SensorDeviceClass.UV_INDEX),
+    "UVindex": (None, SensorDeviceClass.UV),
     "TeplotaVnitrni": (UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
     "VlhkostVnitrni": (PERCENTAGE, SensorDeviceClass.HUMIDITY),
     "Co2": (CONCENTRATION_PARTS_PER_MILLION, SensorDeviceClass.CO2),
