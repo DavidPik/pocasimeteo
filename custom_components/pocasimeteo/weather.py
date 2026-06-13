@@ -10,7 +10,7 @@ from homeassistant.components.weather import (
     WeatherEntityFeature,
 )
 from homeassistant.const import (
-    TEMP_CELSIUS,
+    UnitOfTemperature,
     PERCENTAGE,
     UnitOfPressure,
     UnitOfSpeed,
@@ -78,7 +78,7 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
 
     @property
     def native_temperature_unit(self) -> str:
-        return TEMP_CELSIUS
+        return UnitOfTemperature.CELSIUS
 
     @property
     def humidity(self) -> float | None:
