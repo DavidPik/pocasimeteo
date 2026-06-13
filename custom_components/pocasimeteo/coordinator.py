@@ -43,6 +43,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         self.api_url = API_URL_TEMPLATE.format(api_key=self.api_key)
 
+    def to_float(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
     async def _async_update_data(self):
         """Fetch data from PočasíMeteo API."""
         try:
@@ -95,8 +101,35 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "raw": current,
         }
 
-        # Add all measurement fields dynamically
+        # Keys, které mají být vždy float
+        FLOAT_KEYS = {
+            "TeplotaVnejsi",
+            "VlhkostVnejsi",
+            "Vitr",
+            "VitrNarazy",
+            "SrazkyDen",
+            "TlakRel",
+            "TeplotaVnitrni",
+            "VlhkostVnitrni",
+            "SlunZareni",
+            "UVindex",
+            "min_temp_24h",
+            "max_temp_24h",
+        }
+
+        # Keys, které mají zůstat string
+        STRING_KEYS = {
+            "VitrSmer",
+        }
+
+        # Dynamické naplnění dat
         for key, value in current.items():
-            data[key] = value
+            if key in FLOAT_KEYS:
+                data[key] = _to_float(value)
+            elif key in STRING_KEYS:
+                data[key] = value
+            else:
+                # Ostatní hodnoty ponecháme tak, jak jsou
+                data[key] = value
 
         return data
