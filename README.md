@@ -1,159 +1,156 @@
-# PočasíMeteo
+# PočasíMeteo – integrace meteostanice pro Home Assistant
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![GitHub release](https://img.shields.io/github/release/glaverCZ/pocasimeteo.svg)](https://github.com/glaverCZ/pocasimeteo/releases)
-[![License](https://img.shields.io/github/license/glaverCZ/pocasimeteo.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/release/davidpik/pocasimeteo.svg)](https://github.com/davidpik/pocasimeteo/releases)
+[![License](https://img.shields.io/github/license/davidpik/pocasimeteo.svg)](LICENSE)
 
-Home Assistant integrace pro meteorologická data z [PočasíMeteo.cz](https://www.pocasimeteo.cz/).
+Integrace umožňuje připojit **meteostanici PočasíMeteo.cz** do Home Assistantu.  
+Získává **aktuální měření** přímo z API meteostanice a poskytuje:
 
-## Funkce
+- entitu **weather** (aktuální počasí + volitelná předpověď z jiné integrace)
+- **dynamicky generované senzory** pro všechna dostupná měření
+- podporu doplňkových čidel (Te1–Te5, Vl1–Vl5, CO₂, PM1/PM2.5…)
+- podporu volitelného forecastu z jiné weather integrace
 
-- **Libovolná meteorologická stanice:**
-  - Zadejte název stanice dostupné na PočasíMeteo.cz
-  - Např.: praha-6-ruzyne, brno, ostrava, plzen, liberec, olomouc, atd.
-
-- **7 meteorologických modelů:**
-  - MASTER (Ensemble - kombinace všech modelů)
-  - ALADIN (ČHMÚ model pro Česko)
-  - ICON-EU (Evropský model)
-  - ICON-DE (Německý model s vysokým rozlišením)
-  - YR.no (Norský model)
-  - GFS (Americký globální model)
-  - WRF (Model s vysokým rozlišením)
-
-- **Předpověď:**
-  - Hodinová předpověď (48 hodin)
-  - Denní předpověď (7 dní)
-
-- **Aktuální podmínky:**
-  - Teplota
-  - Vlhkost
-  - Tlak
-  - Rychlost a směr větru
-  - Stav počasí
-
-- **Doplňující atributy:**
-  - Oblačnost
-  - Pravděpodobnost srážek
-  - Sníh
-  - Poryvy větru
-  - Směr větru (text)
-
-- **Automatická aktualizace:** Každou hodinu
-
-## Instalace
-
-### Krok 1: Instalace integrace
-
-#### HACS (doporučeno)
-
-1. Otevřete HACS v Home Assistant
-2. Přejděte do sekce **"Integrations"**
-3. Klikněte na **+ EXPLORE & DOWNLOAD REPOSITORIES**
-4. Vyhledejte **"PočasíMeteo"**
-5. Klikněte na **Download**
-6. **Restartujte Home Assistant**
-
-#### Manuální instalace
-
-1. Zkopírujte složku `custom_components/pocasimeteo` do vaší `config/custom_components/` složky v Home Assistant
-2. **Restartujte Home Assistant**
-
-### Krok 2: Konfigurace integrace
-
-1. Přejděte do **Nastavení** → **Zařízení a služby** → **+ PŘIDAT INTEGRACI**
-2. Vyhledejte **"PočasíMeteo"**
-3. Zadejte název stanice (např. praha-6-ruzyne)
-4. Vyberte preferovaný model předpovědi (výchozí: MASTER)
-5. Dokončete konfiguraci
-
-### Krok 3: Instalace Lovelace Card (volitelné, ale doporučeno)
-
-Pro zobrazení počasí s pokročilými funkcemi nainstalujte [PočasíMeteo Card](https://github.com/glaverCZ/pocasimeteo-card):
-
-1. Otevřete HACS v Home Assistant
-2. Přejděte do sekce **"Frontend"**
-3. Klikněte na **+ EXPLORE & DOWNLOAD REPOSITORIES**
-4. Vyhledejte **"PočasíMeteo Card"**
-5. Klikněte na **Download**
-6. **Restartujte Home Assistant**
-7. **Smažte browser cache** (Ctrl+F5 nebo Cmd+Shift+R)
-
-## Konfigurace
-
-### Prostřednictvím UI
-
-1. Přejděte do **Nastavení** → **Zařízení a služby**
-2. Klikněte na tlačítko **+ PŘIDAT INTEGRACI**
-3. Vyhledejte **PočasíMeteo**
-4. Zadejte název meteorologické stanice (např. praha-6-ruzyne)
-5. Vyberte preferovaný model předpovědi (výchozí: MASTER)
-6. Dokončete konfiguraci
-
-## Lovelace Custom Card
-
-Pro pokročilé zobrazení počasí s podporou více modelů a srovnáním přesnosti nainstalujte **[PočasíMeteo Card](https://github.com/glaverCZ/pocasimeteo-card)** (samostatný repozitář).
-
-Card nabízí:
-- Podporu všech 7 meteorologických modelů
-- Automatický výběr nejpřesnějšího modelu
-- Srovnání předpovědi s aktuálními hodnotami
-- Vlastní pořadí dlaždic
-- 125+ PNG ikon počasí
-
-Pro instalaci a dokumentaci viz **https://github.com/glaverCZ/pocasimeteo-card**
-
-### Příklad automatizace
-
-```yaml
-automation:
-  - alias: "Upozornění na déšť"
-    trigger:
-      - platform: numeric_state
-        entity_id: weather.pocasimeteo_praha_6_ruzyne
-        attribute: precipitation_probability
-        above: 70
-    action:
-      - service: notify.mobile_app
-        data:
-          message: "Dnes bude pravděpodobně pršet ({{ state_attr('weather.pocasimeteo_praha_6_ruzyne', 'precipitation_probability') }}%)"
-```
-
-## Entity
-
-Integrace vytvoří pro každou nakonfigurovanou stanici **7 weather entit** (jednu pro každý model):
-
-- **Primární entita** (MASTER): `weather.pocasimeteo_<stanice>`
-- **ALADIN**: `weather.pocasimeteo_<stanice>_aladin`
-- **ICONDE**: `weather.pocasimeteo_<stanice>_icon`
-- **ICONEU**: `weather.pocasimeteo_<stanice>_cosmo`
-- **YRno**: `weather.pocasimeteo_<stanice>_yrno`
-- **GFS**: `weather.pocasimeteo_<stanice>_gfs`
-- **WRF**: `weather.pocasimeteo_<stanice>_wrf`
-
-Všechny entity jsou dostupné pro použití v dashboard a automatizacích.
-
-## Známé omezení
-
-- Data jsou dostupná pouze pro stanice dostupné na PočasíMeteo.cz
-- Aktualizace probíhá každou hodinu (limitováno API)
-- Některé modely nemusí být vždy dostupné (závisí na API)
-- Název stanice musí odpovídat URL formátu na PočasíMeteo.cz (např. praha-6-ruzyne)
-
-## Podpora
-
-Máte-li problém nebo nápad na vylepšení:
-- [Vytvořte issue](https://github.com/glaverCZ/pocasimeteo/issues)
-- [Přispějte kódem](https://github.com/glaverCZ/pocasimeteo/pulls)
-
-## Licence
-
-Tento projekt je licencován pod MIT licencí - viz [LICENSE](LICENSE) soubor pro detaily.
-
-## Upozornění
-
-Tato integrace není oficiálně podporována ani schvalována provozovateli PočasíMeteo.cz.
+Integrace je plně kompatibilní s HACS.
 
 ---
 
-**Vytvořeno pro Home Assistant komunitu**
+## 📦 Instalace
+
+### 🔧 Instalace přes HACS (doporučeno)
+
+1. Otevřete **HACS → Integrations**
+2. Klikněte na **Custom repositories**
+3. Přidejte URL repozitáře: https://github.com/DavidPik/pocasimeteo (github.com in Bing)
+4. Typ: **Integration**
+5. Vyhledejte **PočasíMeteo**
+6. Klikněte **Install**
+
+### 🗂️ Manuální instalace
+
+Zkopírujte složku: custom_components/pocasimeteo
+Restartujte Home Assistant.
+
+---
+
+## ⚙️ Konfigurace
+
+Integrace se konfiguruje přes:
+
+**Nastavení → Integrace → Přidat integraci → PočasíMeteo**
+
+Budete vyzváni k zadání:
+
+| Pole | Popis |
+|------|--------|
+| **Název stanice** | Libovolný název, který se zobrazí v HA |
+| **API klíč** | Hodnota `KlicApi` z PočasíMeteo |
+| **Interval aktualizace** | 1–30 minut |
+| **Weather entita pro předpověď (volitelné)** | Např. `weather.openweathermap` |
+
+### 🔍 Kde získat API klíč?
+
+API klíč najdete v URL meteostanice: https://ext.pocasimeteo.cz/ms/?KlicApi=XXXXXXXX (ext.pocasimeteo.cz in Bing)
+
+---
+
+## 🌦️ Entita Weather
+
+Integrace poskytuje entitu: weather.<název_stanice>
+
+### Obsahuje:
+
+- aktuální teplotu  
+- vlhkost  
+- tlak  
+- rychlost větru  
+- směr větru  
+- nárazy větru  
+- UV index  
+- sluneční záření  
+- srážky  
+
+### Předpověď
+
+Pokud v konfiguraci vyberete jinou weather entitu (např. OpenWeatherMap), integrace:
+
+- použije **vlastní aktuální data**
+- a **forecast převezme z vybrané entity**
+
+---
+
+## 📡 Senzory
+
+Integrace automaticky vytvoří senzory podle toho, co meteostanice vrací.
+
+### Typické senzory:
+
+| Název | Klíč API | Jednotka |
+|-------|----------|----------|
+| Vnější teplota | `TeplotaVnejsi` | °C |
+| Vnější vlhkost | `VlhkostVnejsi` | % |
+| Tlak vzduchu | `TlakRel` | hPa |
+| Rychlost větru | `Vitr` | m/s |
+| Nárazy větru | `VitrNarazy` | m/s |
+| Směr větru | `VitrSmer` | ° |
+| Denní srážky | `SrazkyDen` | mm |
+| Intenzita srážek | `rainIntensity` | mm/5min |
+| Sluneční záření | `SlunZareni` | W/m² |
+| UV index | `UVindex` | — |
+| Vnitřní teplota | `TeplotaVnitrni` | °C |
+| Vnitřní vlhkost | `VlhkostVnitrni` | % |
+
+### Doplňková čidla (pokud existují):
+
+- `Te1`–`Te5` (teploty)
+- `Vl1`–`Vl5` (vlhkosti)
+- `Co2`
+- `Pm1`, `Pm2`
+- `VlP`, `VlP2`
+- další hodnoty podle stanice
+
+Senzory se generují **automaticky**, není nutná žádná konfigurace.
+
+---
+
+## 🧪 Troubleshooting
+
+### ❗ „Invalid API key“
+- API klíč je chybný nebo stanice není dostupná  
+- ověřte URL meteostanice
+
+### ❗ Senzory se nezobrazují
+- zkontrolujte, zda API vrací hodnoty  
+- otevřete:  
+  `https://ext.pocasimeteo.cz/ms/api/weather?KlicApi=XXXXXX`
+
+### ❗ Forecast nefunguje
+- vybraná weather entita musí mít atribut `forecast`  
+- ověřte v Developer Tools → States
+
+---
+
+## 🧱 Struktura projektu
+
+custom_components/pocasimeteo/
+│
+├── init.py
+├── const.py
+├── coordinator.py
+├── config_flow.py
+├── weather.py
+└── sensor.py
+
+---
+
+## 📄 Licence
+
+MIT License  
+© 2024–2026 David Pikál
+
+---
+
+
+
+
