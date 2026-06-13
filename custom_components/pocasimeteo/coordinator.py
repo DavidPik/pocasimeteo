@@ -43,7 +43,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         self.api_url = API_URL_TEMPLATE.format(api_key=self.api_key)
 
-    def to_float(value):
+    def _to_float(value):
         try:
             return float(value)
         except (TypeError, ValueError):
