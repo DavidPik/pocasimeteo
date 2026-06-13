@@ -11,7 +11,7 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import aiohttp_client
-from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from homeassistant.helpers import entity_registry as er
 
 from .const import (
     DOMAIN,
@@ -84,7 +84,7 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _get_schema(self):
         """Return the input form schema."""
         # Load all weather entities for forecast selection
-        registry = async_get_entity_registry(self.hass)
+        registry = er.async_get(self.hass)
         weather_entities = sorted(
             [
                 entity.entity_id
