@@ -116,22 +116,29 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
         data = self.coordinator.data
-        attrs = {}
 
-        for key in (
-            "SrazkyDen",
-            "rainIntensity",
-            "SlunZareni",
-            "UVindex",
-            "TeplotaVnitrni",
-            "VlhkostVnitrni",
-            "VitrNarazy",
-        ):
-            if key in data:
-                attrs[key] = data[key]
+        return {
+            "station_name": data.get("station_name"),
+            "timestamp": data.get("timestamp"),
+            "webcam_url": data.get("webcam_url"),
 
-        attrs["last_update"] = data.get("timestamp")
-        return attrs
+            "TeplotaVnejsi": data.get("TeplotaVnejsi"),
+            "VlhkostVnejsi": data.get("VlhkostVnejsi"),
+            "Vitr": data.get("Vitr"),
+            "VitrNarazy": data.get("VitrNarazy"),
+            "SrazkyDen": data.get("SrazkyDen"),
+            "TlakRel": data.get("TlakRel"),
+
+            "TeplotaVnitrni": data.get("TeplotaVnitrni"),
+            "VlhkostVnitrni": data.get("VlhkostVnitrni"),
+
+            "SlunZareni": data.get("SlunZareni"),
+            "UVindex": data.get("UVindex"),
+
+            "min_temp_24h": data.get("min_temp_24h"),
+            "max_temp_24h": data.get("max_temp_24h"),
+        }
+
 
     # ----------------------------------------------------------------------
     # FORECAST (from external weather entity)
