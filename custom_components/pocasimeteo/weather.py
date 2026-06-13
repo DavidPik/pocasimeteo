@@ -113,7 +113,7 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
         return None
 
     @property
-    def native_precipitation`(self) -> float | None:
+    def native_precipitation(self) -> float | None:
         return self.coordinator.data.get("SrazkyDen")
 
     @property
