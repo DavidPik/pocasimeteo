@@ -1,11 +1,11 @@
 {
   "domain": "pocasimeteo",
   "name": "PočasíMeteo",
-  "version": "4.0.1",
-  "documentation": "https://github.com/glaverCZ/pocasimeteo",
-  "issue_tracker": "https://github.com/glaverCZ/pocasimeteo/issues",
+  "version": "5.0.1",
+  "documentation": "https://github.com/davidpik/pocasimeteo",
+  "issue_tracker": "https://github.com/davidpik/pocasimeteo/issues",
   "requirements": [],
-  "codeowners": ["@glaverCZ"],
+  "codeowners": ["@davidpik"],
   "iot_class": "cloud_polling",
   "config_flow": true
 }
