@@ -71,7 +71,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if not records:
             raise UpdateFailed("API returned empty dataset")
 
-        # Metadata
+        # Metadata vs measurements
         if records and (
             records[0].get("LokalitaStanice")
             or records[0].get("DoplCidlaJson")
@@ -87,22 +87,17 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         current = measurements[-1]
 
-        # Build final data dict
-        data = {
-            "station_name": self.station_name,
-            "timestamp": current.get("Datum"),
-            "meta": meta,
-            "raw": current,
-        }
+        if not isinstance(current, dict):
+            raise UpdateFailed(f"Unexpected measurement format: {current!r}")
 
-        # Helper: bezpečný převod na float
+        # Helper: safe float conversion
         def _to_float(value):
             try:
                 return float(value)
             except (TypeError, ValueError):
                 return None
 
-        # Keys, které mají být vždy float
+        # Keys that should be numeric
         FLOAT_KEYS = {
             "TeplotaVnejsi",
             "VlhkostVnejsi",
@@ -118,19 +113,26 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "max_temp_24h",
         }
 
-        # Keys, které mají zůstat string
+        # Keys that should stay as string
         STRING_KEYS = {
             "VitrSmer",
         }
 
-        # Dynamické naplnění dat
+        # Base data dict
+        data: dict[str, object] = {
+            "station_name": self.station_name,
+            "timestamp": current.get("Datum"),
+            "meta": meta,
+            "raw": current,
+        }
+
+        # Fill normalized values
         for key, value in current.items():
             if key in FLOAT_KEYS:
                 data[key] = _to_float(value)
             elif key in STRING_KEYS:
                 data[key] = value
             else:
-                # Ostatní hodnoty ponecháme tak, jak jsou
                 data[key] = value
 
         return data
