@@ -37,7 +37,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=f"{DOMAIN}_{self.station_name}",
-            update_interval=UPDATE_INTERVAL,
+            update_interval = timedelta(minutes=entry.data[CONF_UPDATE_INTERVAL])
         )
 
     async def _async_update_data(self):
