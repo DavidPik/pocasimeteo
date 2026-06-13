@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 DOMAIN = "pocasimeteo"
 CONF_STATION = "station"
 CONF_MODEL = "model"
+CONF_API_KEY = "api_key"
 
 # Souřadnice a časové pásmo pro Prahu
 PRAGUE_COORDINATES = {"latitude": 50.0755, "longitude": 14.4378}
@@ -30,7 +31,7 @@ WEATHER_MODELS = {
 WEATHER_MODELS_LABELS = {name: info["label"] for name, info in WEATHER_MODELS.items()}
 
 # URL šablona pro API
-API_URL_TEMPLATE = "https://ext.pocasimeteo.cz/{station}/predpoved/data/weather_data.json"
+API_URL_TEMPLATE = "https://ext.pocasimeteo.cz/ms/api/weather?KlicApi={api_key}"
 
 # Aktualizační interval - 1 minutu po každé celé hodině (s malou náhodností pro distribuci zátěže)
 # Pozn: Tento interval se ignoruje v coordinatoru, kde se místo toho nastavuje konkrétní čas
