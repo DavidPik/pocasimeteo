@@ -7,6 +7,7 @@ DOMAIN = "pocasimeteo"
 # Konfigurační klíče
 CONF_STATION = "station_name"      # Název stanice (pro zobrazení)
 CONF_API_KEY = "api_key"           # API klíč meteostanice
+CONF_UPDATE_INTERVAL = "update_interval"    # Interval aktualizace dat (pro senzory)
 
 # API endpoint pro nové PočasíMeteo API
 API_URL_TEMPLATE = (
