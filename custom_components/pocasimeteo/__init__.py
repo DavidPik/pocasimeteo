@@ -1,60 +1,52 @@
-"""The PočasíMeteo integration."""
+"""PočasíMeteo integration for Home Assistant."""
+
+from __future__ import annotations
+
 import logging
-from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.WEATHER]
+PLATFORMS = ["weather"]
 
 
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up the PočasíMeteo component."""
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up integration via YAML (not supported)."""
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PočasíMeteo from a config entry."""
-    _LOGGER.info("▶ Setting up PočasíMeteo integration")
+    _LOGGER.debug("Setting up PočasíMeteo entry: %s", entry.title)
 
-    try:
-        _LOGGER.info("→ Creating coordinator")
-        coordinator = PocasimeteoDataUpdateCoordinator(hass, entry)
+    coordinator = PocasimeteoDataUpdateCoordinator(hass, entry)
 
-        _LOGGER.info("→ Running first refresh")
-        await coordinator.async_config_entry_first_refresh()
-        _LOGGER.info("✓ First refresh completed")
+    # První načtení dat
+    await coordinator.async_config_entry_first_refresh()
 
-        hass.data.setdefault(DOMAIN, {})
-        hass.data[DOMAIN][entry.entry_id] = coordinator
+    # Ulož coordinator
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][entry.entry_id] = coordinator
 
-        _LOGGER.info("→ Setting up platforms: %s", PLATFORMS)
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        _LOGGER.info("✓ PočasíMeteo setup completed successfully")
+    # Zaregistruj platformy
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-        # Listen to options updates
-        entry.async_on_unload(entry.add_update_listener(async_update_entry))
-
-        return True
-    except Exception as err:
-        _LOGGER.error("✗ Error setting up PočasíMeteo: %s", err, exc_info=True)
-        raise
-
-
-async def async_update_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Update options."""
-    await hass.config_entries.async_reload(entry.entry_id)
+    return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id)
-    
+    """Unload PočasíMeteo config entry."""
+    _LOGGER.debug("Unloading PočasíMeteo entry: %s", entry.title)
+
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+    if unload_ok:
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+
     return unload_ok
