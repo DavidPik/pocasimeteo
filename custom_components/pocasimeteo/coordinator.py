@@ -43,12 +43,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         self.api_url = API_URL_TEMPLATE.format(api_key=self.api_key)
 
-    def _to_float(value):
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-
     async def _async_update_data(self):
         """Fetch data from PočasíMeteo API."""
         try:
@@ -100,6 +94,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "meta": meta,
             "raw": current,
         }
+
+        # Helper: bezpečný převod na float
+        def _to_float(value):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
 
         # Keys, které mají být vždy float
         FLOAT_KEYS = {
