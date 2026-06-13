@@ -101,8 +101,20 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
         return UnitOfSpeed.METERS_PER_SECOND
 
     @property
+    def native_wind_gust_speed(self) -> float | None:
+        return self.coordinator.data.get("VitrNarazy")
+
+    @property
     def wind_bearing(self) -> float | None:
-        return self.coordinator.data.get("VitrSmer")
+        """Return wind bearing.
+
+        Meteostanice neposkytuje směr větru jako číslo → necháme None.
+        """
+        return None
+
+    @property
+    def native_precipitation`(self) -> float | None:
+        return self.coordinator.data.get("SrazkyDen")
 
     @property
     def condition(self) -> str | None:
@@ -125,6 +137,7 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
             "TeplotaVnejsi": data.get("TeplotaVnejsi"),
             "VlhkostVnejsi": data.get("VlhkostVnejsi"),
             "Vitr": data.get("Vitr"),
+            "VitrSmer": data.get("VitrSmer"),
             "VitrNarazy": data.get("VitrNarazy"),
             "SrazkyDen": data.get("SrazkyDen"),
             "TlakRel": data.get("TlakRel"),
