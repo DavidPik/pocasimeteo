@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
-    TEMP_CELSIUS,
+    UnitOfTemperature,
     PERCENTAGE,
     UnitOfPressure,
     UnitOfSpeed,
@@ -31,7 +31,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Mapování klíčů API → jednotky + device_class
 SENSOR_DEFINITIONS = {
-    "TeplotaVnejsi": (TEMP_CELSIUS, SensorDeviceClass.TEMPERATURE),
+    "TeplotaVnejsi": (UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
     "VlhkostVnejsi": (PERCENTAGE, SensorDeviceClass.HUMIDITY),
     "TlakRel": (UnitOfPressure.HPA, SensorDeviceClass.PRESSURE),
     "Vitr": (UnitOfSpeed.METERS_PER_SECOND, SensorDeviceClass.WIND_SPEED),
@@ -41,7 +41,7 @@ SENSOR_DEFINITIONS = {
     "rainIntensity": ("mm/5min", SensorDeviceClass.NONE),
     "SlunZareni": (UnitOfIrradiance.WATTS_PER_SQUARE_METER, SensorDeviceClass.ILLUMINANCE),
     "UVindex": (None, SensorDeviceClass.UV_INDEX),
-    "TeplotaVnitrni": (TEMP_CELSIUS, SensorDeviceClass.TEMPERATURE),
+    "TeplotaVnitrni": (UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
     "VlhkostVnitrni": (PERCENTAGE, SensorDeviceClass.HUMIDITY),
     "Co2": (CONCENTRATION_PARTS_PER_MILLION, SensorDeviceClass.CO2),
     "Pm1": (CONCENTRATION_MICROGRAMS_PER_CUBIC_METER, SensorDeviceClass.PM1),
@@ -55,7 +55,7 @@ def guess_unit_and_class(key: str):
     k = key.lower()
 
     if k.startswith("te"):
-        return TEMP_CELSIUS, SensorDeviceClass.TEMPERATURE
+        return UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE
 
     if k.startswith("vl"):
         return PERCENTAGE, SensorDeviceClass.HUMIDITY
