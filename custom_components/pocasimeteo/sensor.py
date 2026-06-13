@@ -39,7 +39,7 @@ SENSOR_DEFINITIONS = {
     "VitrSmer": (None, None),
     "SrazkyDen": (UnitOfPrecipitationDepth.MILLIMETERS, SensorDeviceClass.PRECIPITATION),
     "rainIntensity": ("mm/5min", None),
-    "SlunZareni": (UnitOfIrradiance.WATTS_PER_SQUARE_METER, SensorDeviceClass.ILLUMINANCE),
+    "SlunZareni": (UnitOfIrradiance.WATTS_PER_SQUARE_METER, None),
     "UVindex": (None, None),
     "TeplotaVnitrni": (UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
     "VlhkostVnitrni": (PERCENTAGE, SensorDeviceClass.HUMIDITY),
