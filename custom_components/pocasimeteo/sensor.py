@@ -136,3 +136,10 @@ class PocasimeteoSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_unit_of_measurement(self):
         return self._unit
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "min": self.coordinator.data.get(f"{self._key}_min"),
+            "max": self.coordinator.data.get(f"{self._key}_max"),
+        }
