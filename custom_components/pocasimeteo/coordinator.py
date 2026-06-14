@@ -87,11 +87,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         current = measurements[-1]
 
-        if not isinstance(current, dict):
-            raise UpdateFailed(f"Unexpected measurement format: {current!r}")
-
         # Helper: safe float conversion
         def _to_float(value):
+            if value in (None, "", "-", "—"):
+                return None
             try:
                 return float(value)
             except (TypeError, ValueError):
@@ -109,13 +108,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "VlhkostVnitrni",
             "SlunZareni",
             "UVindex",
-            "min_temp_24h",
-            "max_temp_24h",
-        }
-
-        # Keys that should stay as string
-        STRING_KEYS = {
-            "VitrSmer",
         }
 
         # Base data dict
@@ -123,16 +115,32 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "station_name": self.station_name,
             "timestamp": current.get("Datum"),
             "meta": meta,
-            "raw": current,
         }
 
         # Fill normalized values
         for key, value in current.items():
             if key in FLOAT_KEYS:
                 data[key] = _to_float(value)
-            elif key in STRING_KEYS:
-                data[key] = value
             else:
                 data[key] = value
+
+        # ------------------------------------------------------------------
+        # MIN/MAX výpočty pro všechny veličiny
+        # ------------------------------------------------------------------
+
+        for key in FLOAT_KEYS:
+            values = []
+            for m in measurements:
+                v = m.get(key)
+                v = _to_float(v)
+                if v is not None:
+                    values.append(v)
+
+            if values:
+                data[f"{key}_min"] = min(values)
+                data[f"{key}_max"] = max(values)
+            else:
+                data[f"{key}_min"] = None
+                data[f"{key}_max"] = None
 
         return data
