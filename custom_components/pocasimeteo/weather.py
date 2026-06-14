@@ -105,53 +105,64 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
         return self.coordinator.data.get("VitrNarazy")
 
     @property
-    def wind_bearing(self) -> float | None:
-        """Return wind bearing.
-
-        Meteostanice neposkytuje směr větru jako číslo → necháme None.
-        """
-        return None
-
-    @property
     def native_precipitation(self) -> float | None:
         return self.coordinator.data.get("SrazkyDen")
 
     @property
-    def condition(self) -> str | None:
-        """Return weather condition.
-
-        Meteostanice neposkytuje stav počasí → necháme None.
-        """
+    def wind_bearing(self) -> float | None:
+        """Meteostanice neposkytuje bearing v ° → vracíme None."""
         return None
+
+    @property
+    def condition(self) -> str | None:
+        """Return weather condition (not provided by API)."""
+        return None
+
+    # ----------------------------------------------------------------------
+    # ATTRIBUTES (including min/max)
+    # ----------------------------------------------------------------------
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return extra attributes."""
         data = self.coordinator.data
 
-        return {
+        attrs = {
             "station_name": data.get("station_name"),
             "timestamp": data.get("timestamp"),
             "webcam_url": data.get("webcam_url"),
 
+            # Current values
             "TeplotaVnejsi": data.get("TeplotaVnejsi"),
             "VlhkostVnejsi": data.get("VlhkostVnejsi"),
             "Vitr": data.get("Vitr"),
-            "VitrSmer": data.get("VitrSmer"),
             "VitrNarazy": data.get("VitrNarazy"),
             "SrazkyDen": data.get("SrazkyDen"),
             "TlakRel": data.get("TlakRel"),
-
             "TeplotaVnitrni": data.get("TeplotaVnitrni"),
             "VlhkostVnitrni": data.get("VlhkostVnitrni"),
-
             "SlunZareni": data.get("SlunZareni"),
             "UVindex": data.get("UVindex"),
-
-            "min_temp_24h": data.get("min_temp_24h"),
-            "max_temp_24h": data.get("max_temp_24h"),
+            "VitrSmer": data.get("VitrSmer"),
         }
 
+        # Add min/max for all numeric keys
+        for key in [
+            "TeplotaVnejsi",
+            "VlhkostVnejsi",
+            "Vitr",
+            "VitrNarazy",
+            "SrazkyDen",
+            "TlakRel",
+            "TeplotaVnitrni",
+            "VlhkostVnitrni",
+            "SlunZareni",
+            "UVindex",
+        ]:
+            attrs[f"{key}_min"] = data.get(f"{key}_min")
+            attrs[f"{key}_max"] = data.get(f"{key}_max")
+
+        return attrs
 
     # ----------------------------------------------------------------------
     # FORECAST (from external weather entity)
