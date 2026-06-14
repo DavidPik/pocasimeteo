@@ -176,52 +176,52 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
     # CONDITION (calculated from attributes) 
     # ----------------------------------------------------------------------
 
-    @propeerty
+    @property
     def condition(self) -> str | None:
-    data = self.coordinator.data
+        data = self.coordinator.data
 
-    slun = data.get("SlunZareni") or 0
-    uv = data.get("UVindex") or 0
-    vitr = data.get("Vitr") or 0
+        slun = data.get("SlunZareni") or 0
+        uv = data.get("UVindex") or 0
+        vitr = data.get("Vitr") or 0
 
-    # Night detection
-    is_night = slun < 5 and uv < 0.1
+        # Night detection
+        is_night = slun < 5 and uv < 0.1
 
-    # Rain detection (compare last two measurements)
-    measurements = self.coordinator.data.get("measurements")
-    is_rain = False
-    if measurements and len(measurements) >= 2:
-        prev = measurements[-2].get("SrazkyDen") or 0
-        curr = measurements[-1].get("SrazkyDen") or 0
-        is_rain = curr > prev
+        # Rain detection (compare last two measurements)
+        measurements = self.coordinator.data.get("measurements")
+        is_rain = False
+        if measurements and len(measurements) >= 2:
+            prev = measurements[-2].get("SrazkyDen") or 0
+            curr = measurements[-1].get("SrazkyDen") or 0
+            is_rain = curr > prev
 
-    # Wind detection
-    is_windy = vitr >= 8
+        # Wind detection
+        is_windy = vitr >= 8
 
-    # Base condition
-    if is_night:
-        base = "night"
-    elif is_rain:
-        base = "rainy"
-    elif slun > 400:
-        base = "sunny"
-    elif slun > 100:
-        base = "partlycloudy"
-    else:
-        base = "cloudy"
+        # Base condition
+        if is_night:
+            base = "night"
+        elif is_rain:
+            base = "rainy"
+        elif slun > 400:
+            base = "sunny"
+        elif slun > 100:
+            base = "partlycloudy"
+        else:
+            base = "cloudy"
 
-    # Modifiers
-    mods = []
-    if is_windy:
-        mods.append("windy")
-    if is_rain and base != "rainy":
-        mods.append("rainy")
-    if is_night and base != "night":
-        mods.append("night")
+        # Modifiers
+        mods = []
+        if is_windy:
+            mods.append("windy")
+        if is_rain and base != "rainy":
+            mods.append("rainy")
+        if is_night and base != "night":
+            mods.append("night")
 
-    if mods:
-        return base + " & " + " & ".join(mods)
-    return base
+        if mods:
+            return base + " & " + " & ".join(mods)
+        return base
 
     # ----------------------------------------------------------------------
     # FORECAST (from external weather entity)
