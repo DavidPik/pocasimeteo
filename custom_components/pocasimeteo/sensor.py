@@ -139,6 +139,15 @@ class PocasimeteoSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
+        # Speciální případ: směr větru
+        if self._key == "VitrSmer":
+            return {
+                "mode": self.coordinator.data.get("VitrSmer_mode"),
+                "avg": self.coordinator.data.get("VitrSmer_avg"),
+                "variability": self.coordinator.data.get("VitrSmer_var"),
+            }
+
+        # Ostatní senzory mají min/max
         return {
             "min": self.coordinator.data.get(f"{self._key}_min"),
             "max": self.coordinator.data.get(f"{self._key}_max"),
