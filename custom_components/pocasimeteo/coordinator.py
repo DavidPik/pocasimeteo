@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+import math
 
 import aiohttp
 import async_timeout
@@ -102,13 +103,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "VlhkostVnejsi",
             "Vitr",
             "VitrNarazy",
-            "VitrSmer",
             "SrazkyDen",
             "TlakRel",
             "TeplotaVnitrni",
             "VlhkostVnitrni",
             "SlunZareni",
             "UVindex",
+            "VitrSmer",
         }
 
         # Base data dict
@@ -126,10 +127,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 data[key] = value
 
         # ------------------------------------------------------------------
-        # MIN/MAX výpočty pro všechny veličiny
+        # MIN/MAX výpočty pro všechny veličiny kromě VitrSmer
         # ------------------------------------------------------------------
 
-        for key in FLOAT_KEYS:
+        float_keys_for_minmax = FLOAT_KEYS - {"VitrSmer"}
+
+        for key in float_keys_for_minmax:
             values = []
             for m in measurements:
                 v = m.get(key)
@@ -143,5 +146,42 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             else:
                 data[f"{key}_min"] = None
                 data[f"{key}_max"] = None
+
+        # ------------------------------------------------------------------
+        # Statistika směru větru (modus, cirkulární průměr, variabilita)
+        # ------------------------------------------------------------------
+
+        angles = []
+        for m in measurements:
+            v = _to_float(m.get("VitrSmer"))
+            if v is not None:
+                angles.append(v)
+
+        if angles:
+            # 1) MODUS – nejčastější směr (12 sektorů po 30°)
+            bins = [0] * 12
+            for a in angles:
+                idx = int((a % 360) / 30)
+                bins[idx] += 1
+            mode_sector = bins.index(max(bins))
+            data["VitrSmer_mode"] = mode_sector * 30
+
+            # 2) CIRKULÁRNÍ PRŮMĚR
+            angles_rad = [math.radians(a) for a in angles]
+            avg_sin = sum(math.sin(a) for a in angles_rad) / len(angles_rad)
+            avg_cos = sum(math.cos(a) for a in angles_rad) / len(angles_rad)
+            avg_angle = math.degrees(math.atan2(avg_sin, avg_cos))
+            if avg_angle < 0:
+                avg_angle += 360
+            data["VitrSmer_avg"] = avg_angle
+
+            # 3) VARIABILITA
+            R = math.sqrt(avg_sin**2 + avg_cos**2)
+            variability = 1 - R
+            data["VitrSmer_var"] = variability
+        else:
+            data["VitrSmer_mode"] = None
+            data["VitrSmer_avg"] = None
+            data["VitrSmer_var"] = None
 
         return data
