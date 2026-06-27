@@ -102,6 +102,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "VlhkostVnejsi",
             "Vitr",
             "VitrNarazy",
+            "VitrSmer",
             "SrazkyDen",
             "TlakRel",
             "TeplotaVnitrni",
