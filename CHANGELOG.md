@@ -1,5 +1,5 @@
 # Changelog – PočasíMeteo Home Assistant Integration
-## Verze 6.1.1 - Doplněn senzor VitrSmer
+## Verze 6.2.1 - Doplněn senzor VitrSmer
 
 V této verzi jsou doplněné funkce pro vytváření senzoru pro Směr větru a jeho statistické atributy
 
