@@ -118,8 +118,8 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
 
     @property
     def wind_bearing(self) -> float | None:
-        """Meteostanice neposkytuje bearing v ° → vracíme None."""
-        return None
+        """Return wind direction in degrees."""
+        return self.coordinator.data.get("VitrSmer")
 
     @property
     def condition(self) -> str | None:
@@ -152,6 +152,12 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
             "SlunZareni": data.get("SlunZareni"),
             "UVindex": data.get("UVindex"),
             "VitrSmer": data.get("VitrSmer"),
+
+            # Wind direction + statistics
+            "VitrSmer": data.get("VitrSmer"),
+            "VitrSmer_mode": data.get("VitrSmer_mode"),
+            "VitrSmer_avg": data.get("VitrSmer_avg"),
+            "VitrSmer_var": data.get("VitrSmer_var"),
         }
 
         # Add min/max for all numeric keys
