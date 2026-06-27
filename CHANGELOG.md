@@ -1,4 +1,16 @@
 # Changelog – PočasíMeteo Home Assistant Integration
+## Verze 6.1.1 - Doplněn senzor VitrSmer
+
+V této verzi jsou doplněné funkce pro vytváření senzoru pro Směr větru a jeho statistické atributy
+
+### 🔧 Hlavní změny a opravy
+
+- **Doplněné definice sensoru** - nový senzor pro směr větru
+  - název "VitrSmer"
+  - jednotky "°"
+  - doplňkové statistické atributy "_modus", "_avg", "_variability"
+- **Doplnění definice weather entity** - doplněný atribut "wind_bearing" pro směr větru
+
 ## Verze 6.0.7 – Kompletní modernizace integrace
 
 Tato verze představuje zásadní přepracování původního projektu **glaverCZ/pocasimeteo** s cílem zajistit plnou kompatibilitu s Home Assistant 2026.x, stabilní provoz a rozšířenou funkcionalitu.
