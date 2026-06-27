@@ -36,7 +36,7 @@ SENSOR_DEFINITIONS = {
     "TlakRel": (UnitOfPressure.HPA, SensorDeviceClass.PRESSURE),
     "Vitr": (UnitOfSpeed.METERS_PER_SECOND, SensorDeviceClass.WIND_SPEED),
     "VitrNarazy": (UnitOfSpeed.METERS_PER_SECOND, SensorDeviceClass.WIND_SPEED),
-    "VitrSmer": (None, None),
+    "VitrSmer": ("°", None),
     "SrazkyDen": (UnitOfPrecipitationDepth.MILLIMETERS, SensorDeviceClass.PRECIPITATION),
     "rainIntensity": ("mm/5min", None),
     "SlunZareni": (UnitOfIrradiance.WATTS_PER_SQUARE_METER, None),
