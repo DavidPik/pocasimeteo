@@ -19,6 +19,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import (
     DOMAIN,
@@ -68,6 +69,24 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
 
         # Forecast entity ID (optional)
         self._forecast_entity_id = entry.options.get("forecast_entity_id")
+
+    # ----------------------------------------------------------------------
+    # DEVICE INFO
+    # ----------------------------------------------------------------------
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        data = self.coordinator.data
+        station_name = data.get("station_name", self._entry.title)
+        meta = data.get("meta") or {}
+
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry.entry_id)},
+            name=station_name,
+            manufacturer="PočasíMeteo",
+            model=meta.get("TypStanice") or "Meteostanice",
+            sw_version=meta.get("VerzeFw") or None,
+        )
 
     # ----------------------------------------------------------------------
     # CURRENT CONDITIONS (from meteostation)
@@ -120,12 +139,10 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
 
     @property
     def wind_bearing(self) -> float | None:
-        """Return wind direction in degrees."""
         return self.coordinator.data.get("VitrSmer")
 
     @property
     def condition(self) -> str | None:
-        """Return weather condition (not provided by API)."""
         return None
 
     # ----------------------------------------------------------------------
@@ -134,7 +151,6 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra attributes."""
         data = self.coordinator.data
 
         attrs = {
@@ -147,7 +163,7 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
             "VlhkostVnejsi": data.get("VlhkostVnejsi"),
             "Vitr": data.get("Vitr"),
             "VitrNarazy": data.get("VitrNarazy"),
-            "SrazkyDen": data.get("SrazkyDen"),  # attribute, not sensor
+            "SrazkyDen": data.get("SrazkyDen"),
             "TlakRel": data.get("TlakRel"),
             "TeplotaVnitrni": data.get("TeplotaVnitrni"),
             "VlhkostVnitrni": data.get("VlhkostVnitrni"),
@@ -164,9 +180,6 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
             "SrazkyIntenzita": data.get("SrazkyIntenzita"),
             "SrazkyIntenzita_min": data.get("SrazkyIntenzita_min"),
             "SrazkyIntenzita_max": data.get("SrazkyIntenzita_max"),
-            "SrazkyIntenzita_avg": data.get("SrazkyIntenzita_avg"),
-            "SrazkyIntenzita_mode": data.get("SrazkyIntenzita_mode"),
-            "SrazkyIntenzita_var": data.get("SrazkyIntenzita_var"),
         }
 
         # Add min/max for all numeric keys except SrazkyDen
@@ -248,7 +261,6 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
         return self.hass.states.get(self._forecast_entity_id)
 
     async def async_forecast_daily(self):
-        """Return daily forecast from external entity."""
         entity = self._get_forecast_entity()
         if not entity:
             return None
@@ -257,7 +269,6 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
         return forecast
 
     async def async_forecast_hourly(self):
-        """Return hourly forecast from external entity."""
         entity = self._get_forecast_entity()
         if not entity:
             return None
