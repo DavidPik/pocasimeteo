@@ -37,7 +37,7 @@ SENSOR_DEFINITIONS = {
     "Vitr": (UnitOfSpeed.METERS_PER_SECOND, SensorDeviceClass.WIND_SPEED),
     "VitrNarazy": (UnitOfSpeed.METERS_PER_SECOND, SensorDeviceClass.WIND_SPEED),
     "VitrSmer": ("°", None),
-    "SrazkyIntenzita": ("mm/5min", None),  # nový název senzoru
+    "SrazkyIntenzita": ("mm/5min", None),
     "SlunZareni": (UnitOfIrradiance.WATTS_PER_SQUARE_METER, None),
     "UVindex": (None, None),
     "TeplotaVnitrni": (UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
@@ -81,6 +81,7 @@ async def async_setup_entry(
 
     # Projdeme všechna data z API
     for key, value in coordinator.data.items():
+
         # Přeskočíme metadata
         if key in ("raw", "meta", "station_name", "timestamp"):
             continue
@@ -158,7 +159,9 @@ class PocasimeteoSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        # Speciální případ: směr větru
+        """Return extra attributes such as min/max or wind statistics."""
+
+        # Směr větru → avg/mode/var
         if self._key == "VitrSmer":
             return {
                 "mode": self.coordinator.data.get("VitrSmer_mode"),
@@ -166,14 +169,14 @@ class PocasimeteoSensor(CoordinatorEntity, SensorEntity):
                 "variability": self.coordinator.data.get("VitrSmer_var"),
             }
 
-        # SrazkyIntenzita má pouze min/max
+        # Intenzita srážek → min/max
         if self._key == "SrazkyIntenzita":
             return {
                 "min": self.coordinator.data.get("SrazkyIntenzita_min"),
                 "max": self.coordinator.data.get("SrazkyIntenzita_max"),
             }
 
-        # Ostatní senzory mají min/max
+        # Ostatní senzory → min/max
         return {
             "min": self.coordinator.data.get(f"{self._key}_min"),
             "max": self.coordinator.data.get(f"{self._key}_max"),
