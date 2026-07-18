@@ -97,7 +97,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             except (TypeError, ValueError):
                 return None
 
-        # Keys that should be numeric
+        # Keys that should be numeric (from API)
         FLOAT_KEYS = {
             "TeplotaVnejsi",
             "VlhkostVnejsi",
@@ -117,6 +117,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "station_name": self.station_name,
             "timestamp": current.get("Datum"),
             "meta": meta,
+            "measurements": measurements,  # needed for weather condition logic
         }
 
         # Fill normalized values
@@ -135,8 +136,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         for key in float_keys_for_minmax:
             values = []
             for m in measurements:
-                v = m.get(key)
-                v = _to_float(v)
+                v = _to_float(m.get(key))
                 if v is not None:
                     values.append(v)
 
@@ -161,11 +161,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if values:
                 data[f"{key}_avg"] = sum(values) / len(values)
 
-                # MODE (nejčastější hodnota zaokrouhlená na 1 desetinné místo)
                 rounded = [round(v, 1) for v in values]
                 data[f"{key}_mode"] = max(set(rounded), key=rounded.count)
 
-                # VARIABILITY (standard deviation)
                 mean = data[f"{key}_avg"]
                 variance = sum((v - mean) ** 2 for v in values) / len(values)
                 data[f"{key}_var"] = math.sqrt(variance)
@@ -185,7 +183,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 angles.append(v)
 
         if angles:
-            # 1) MODUS – nejčastější směr (12 sektorů po 30°)
             bins = [0] * 12
             for a in angles:
                 idx = int((a % 360) / 30)
@@ -193,7 +190,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             mode_sector = bins.index(max(bins))
             data["VitrSmer_mode"] = mode_sector * 30
 
-            # 2) CIRKULÁRNÍ PRŮMĚR
             angles_rad = [math.radians(a) for a in angles]
             avg_sin = sum(math.sin(a) for a in angles_rad) / len(angles_rad)
             avg_cos = sum(math.cos(a) for a in angles_rad) / len(angles_rad)
@@ -202,17 +198,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 avg_angle += 360
             data["VitrSmer_avg"] = avg_angle
 
-            # 3) VARIABILITA
             R = math.sqrt(avg_sin**2 + avg_cos**2)
-            variability = 1 - R
-            data["VitrSmer_var"] = variability
+            data["VitrSmer_var"] = 1 - R
         else:
             data["VitrSmer_mode"] = None
             data["VitrSmer_avg"] = None
             data["VitrSmer_var"] = None
 
         # ------------------------------------------------------------------
-        # Výpočet okamžité intenzity srážek
+        # Výpočet okamžité intenzity srážek → SrazkyIntenzita
         # ------------------------------------------------------------------
 
         prev_total = self.hass.data.get(f"{DOMAIN}_prev_rain_total")
@@ -225,13 +219,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         if prev_total is not None and new_total is not None and prev_ts and new_ts:
             try:
-                # časový rozdíl v minutách
                 dt = (datetime.fromisoformat(new_ts) - datetime.fromisoformat(prev_ts)).total_seconds() / 60
                 if dt > 0:
                     intervals = max(1, round(dt / 5))
                     delta = new_total - prev_total
 
-                    # reset o půlnoci
                     if delta < 0:
                         rain_intensity = 0
                     else:
@@ -239,7 +231,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception:
                 rain_intensity = None
 
-        data["Srazky_intensity"] = rain_intensity
+        data["SrazkyIntenzita"] = rain_intensity
+
+        # Min/max pro SrazkyIntenzita
+        if rain_intensity is not None:
+            data["SrazkyIntenzita_min"] = rain_intensity
+            data["SrazkyIntenzita_max"] = rain_intensity
+        else:
+            data["SrazkyIntenzita_min"] = None
+            data["SrazkyIntenzita_max"] = None
 
         # uložit nový stav
         self.hass.data[f"{DOMAIN}_prev_rain_total"] = new_total
