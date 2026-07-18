@@ -34,7 +34,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Load platforms
+    # Forward platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
@@ -45,6 +45,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
+        # Remove coordinator
         hass.data[DOMAIN].pop(entry.entry_id, None)
 
+        # Remove rain intensity cache
+        hass.data.pop(f"{DOMAIN}_prev_rain_total", None)
+        hass.data.pop(f"{DOMAIN}_prev_rain_ts", None)
+
     return unload_ok
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload PočasíMeteo config entry."""
+    await async_unload_entry(hass, entry)
+    await async_setup_entry(hass, entry)
