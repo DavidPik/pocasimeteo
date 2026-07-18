@@ -14,6 +14,7 @@ from homeassistant.const import (
     PERCENTAGE,
     UnitOfPressure,
     UnitOfSpeed,
+    UnitOfPrecipitationDepth,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -110,6 +111,7 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
 
     @property
     def native_precipitation(self) -> float | None:
+        """Return daily precipitation (cumulative)."""
         return self.coordinator.data.get("SrazkyDen")
 
     @property
@@ -145,7 +147,7 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
             "VlhkostVnejsi": data.get("VlhkostVnejsi"),
             "Vitr": data.get("Vitr"),
             "VitrNarazy": data.get("VitrNarazy"),
-            "SrazkyDen": data.get("SrazkyDen"),
+            "SrazkyDen": data.get("SrazkyDen"),  # attribute, not sensor
             "TlakRel": data.get("TlakRel"),
             "TeplotaVnitrni": data.get("TeplotaVnitrni"),
             "VlhkostVnitrni": data.get("VlhkostVnitrni"),
@@ -154,24 +156,31 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
             "VitrSmer": data.get("VitrSmer"),
 
             # Wind direction + statistics
-            "VitrSmer": data.get("VitrSmer"),
             "VitrSmer_mode": data.get("VitrSmer_mode"),
             "VitrSmer_avg": data.get("VitrSmer_avg"),
             "VitrSmer_var": data.get("VitrSmer_var"),
+
+            # Rain intensity (new primary sensor)
+            "SrazkyIntenzita": data.get("SrazkyIntenzita"),
+            "SrazkyIntenzita_min": data.get("SrazkyIntenzita_min"),
+            "SrazkyIntenzita_max": data.get("SrazkyIntenzita_max"),
+            "SrazkyIntenzita_avg": data.get("SrazkyIntenzita_avg"),
+            "SrazkyIntenzita_mode": data.get("SrazkyIntenzita_mode"),
+            "SrazkyIntenzita_var": data.get("SrazkyIntenzita_var"),
         }
 
-        # Add min/max for all numeric keys
+        # Add min/max for all numeric keys except SrazkyDen
         for key in [
             "TeplotaVnejsi",
             "VlhkostVnejsi",
             "Vitr",
             "VitrNarazy",
-            "SrazkyDen",
             "TlakRel",
             "TeplotaVnitrni",
             "VlhkostVnitrni",
             "SlunZareni",
             "UVindex",
+            "SrazkyIntenzita",
         ]:
             attrs[f"{key}_min"] = data.get(f"{key}_min")
             attrs[f"{key}_max"] = data.get(f"{key}_max")
@@ -194,7 +203,7 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
         is_night = slun < 5 and uv < 0.1
 
         # Rain detection (compare last two measurements)
-        measurements = self.coordinator.data.get("measurements")
+        measurements = data.get("measurements")
         is_rain = False
         if measurements and len(measurements) >= 2:
             prev = measurements[-2].get("SrazkyDen") or 0
