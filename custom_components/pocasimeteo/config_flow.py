@@ -35,7 +35,7 @@ DEFAULT_SENSOR_LIST = [
     "Vitr",
     "VitrSmer",
     "UVindex",
-    "SrazkyIntensita",
+    "SrazkyIntenzita",
     "TeplotaVnitrni",
     "VlhkostVnitrni",
 ]
