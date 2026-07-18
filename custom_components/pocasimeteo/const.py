@@ -40,7 +40,7 @@ DEFAULT_SENSORS = [
     "Vitr",
     "VitrSmer",
     "UVindex",
-    "Srazky_intensity",
+    "SrazkyIntenzita",
 
     # Doplňkové senzory
     "TeplotaVnitrni",
@@ -58,7 +58,7 @@ DEFAULT_SENSOR_TYPES = {
     "Vitr": "primary",
     "VitrSmer": "primary",
     "UVindex": "primary",
-    "Srazky_intensity": "primary",
+    "SrazkyIntenzita": "primary",
 
     "TeplotaVnitrni": "secondary",
     "VlhkostVnitrni": "secondary",
@@ -75,7 +75,7 @@ DEFAULT_SENSOR_ORDER = {
     "Vitr": 4,
     "VitrSmer": 5,
     "UVindex": 6,
-    "Srazky_intensity": 7,
+    "SrazkyIntenzita": 7,
 
     "TeplotaVnitrni": 21,
     "VlhkostVnitrni": 22,
