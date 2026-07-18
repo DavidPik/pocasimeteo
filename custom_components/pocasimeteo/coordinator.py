@@ -117,7 +117,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "station_name": self.station_name,
             "timestamp": current.get("Datum"),
             "meta": meta,
-            "measurements": measurements,  # needed for weather condition logic
+            "measurements": measurements,
         }
 
         # Fill normalized values
@@ -219,5 +219,30 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # uložit nový stav
         self.hass.data[f"{DOMAIN}_prev_rain_total"] = new_total
         self.hass.data[f"{DOMAIN}_prev_rain_ts"] = new_ts
+
+        # ------------------------------------------------------------------
+        # Seznam základních a doplňkových senzorů pro frontend kartu
+        # ------------------------------------------------------------------
+
+        data["primary_sensors"] = [
+            "TeplotaVnejsi",
+            "VlhkostVnejsi",
+            "TlakRel",
+            "Vitr",
+            "VitrNarazy",
+            "VitrSmer",
+        ]
+
+        data["secondary_sensors"] = [
+            "RainIntensity",
+            "SlunZareni",
+            "UVindex",
+            "TeplotaVnitrni",
+            "VlhkostVnitrni",
+            "CO2",
+            "PM1",
+            "PM2",
+            "PM1v",
+        ]
 
         return data
