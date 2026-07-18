@@ -22,8 +22,23 @@ from .const import (
     API_URL_TEMPLATE,
 )
 
-_LOGGER = logging.getLogger(__name__)
+data["primary_sensors"] = [
+    "TeplotaVnejsi",
+    "VlhkostVnejsi",
+    "TlakRel",
+    "Vitr",
+    "VitrSmer",
+    "UVindex",
+    "Srazky_intensity",
+]
 
+data["secondary_sensors"] = [
+    "TeplotaVnitrni",
+    "VlhkostVnitrni",
+    # další senzory podle JSON
+]
+
+_LOGGER = logging.getLogger(__name__)
 
 class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     """Coordinator for fetching PočasíMeteo data."""
@@ -93,7 +108,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if value in (None, "", "-", "—"):
                 return None
             try:
-                return float(value)
+                return float(str(value).replace(",", "."))
             except (TypeError, ValueError):
                 return None
 
@@ -148,6 +163,33 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 data[f"{key}_max"] = None
 
         # ------------------------------------------------------------------
+        # AVG, MODE, VARIABILITY pro všechny numeric keys kromě VitrSmer
+        # ------------------------------------------------------------------
+
+        for key in float_keys_for_minmax:
+            values = []
+            for m in measurements:
+                v = _to_float(m.get(key))
+                if v is not None:
+                    values.append(v)
+
+            if values:
+                data[f"{key}_avg"] = sum(values) / len(values)
+
+                # MODE (nejčastější hodnota zaokrouhlená na 1 desetinné místo)
+                rounded = [round(v, 1) for v in values]
+                data[f"{key}_mode"] = max(set(rounded), key=rounded.count)
+
+                # VARIABILITY (standard deviation)
+                mean = data[f"{key}_avg"]
+                variance = sum((v - mean) ** 2 for v in values) / len(values)
+                data[f"{key}_var"] = math.sqrt(variance)
+            else:
+                data[f"{key}_avg"] = None
+                data[f"{key}_mode"] = None
+                data[f"{key}_var"] = None
+
+        # ------------------------------------------------------------------
         # Statistika směru větru (modus, cirkulární průměr, variabilita)
         # ------------------------------------------------------------------
 
@@ -184,4 +226,38 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             data["VitrSmer_avg"] = None
             data["VitrSmer_var"] = None
 
+        # ------------------------------------------------------------------
+        # Výpočet okamžité intenzity srážek
+        # ------------------------------------------------------------------
+
+        prev_total = self.hass.data.get(f"{DOMAIN}_prev_rain_total")
+        prev_ts = self.hass.data.get(f"{DOMAIN}_prev_rain_ts")
+
+        new_total = data.get("SrazkyDen")
+        new_ts = data.get("timestamp")
+
+        rain_intensity = None
+
+        if prev_total is not None and new_total is not None and prev_ts and new_ts:
+            try:
+                # časový rozdíl v minutách
+                dt = (datetime.fromisoformat(new_ts) - datetime.fromisoformat(prev_ts)).total_seconds() / 60
+                if dt > 0:
+                    intervals = max(1, round(dt / 5))
+                    delta = new_total - prev_total
+
+                    # reset o půlnoci
+                    if delta < 0:
+                        rain_intensity = 0
+                    else:
+                        rain_intensity = delta / intervals
+            except Exception:
+                rain_intensity = None
+
+        data["Srazky_intensity"] = rain_intensity
+
+        # uložit nový stav
+        self.hass.data[f"{DOMAIN}_prev_rain_total"] = new_total
+        self.hass.data[f"{DOMAIN}_prev_rain_ts"] = new_ts
+    
         return data
