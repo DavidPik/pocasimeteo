@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import timedelta, datetime
 import math
 
 import aiohttp
@@ -22,23 +22,8 @@ from .const import (
     API_URL_TEMPLATE,
 )
 
-data["primary_sensors"] = [
-    "TeplotaVnejsi",
-    "VlhkostVnejsi",
-    "TlakRel",
-    "Vitr",
-    "VitrSmer",
-    "UVindex",
-    "Srazky_intensity",
-]
-
-data["secondary_sensors"] = [
-    "TeplotaVnitrni",
-    "VlhkostVnitrni",
-    # další senzory podle JSON
-]
-
 _LOGGER = logging.getLogger(__name__)
+
 
 class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     """Coordinator for fetching PočasíMeteo data."""
@@ -259,5 +244,5 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # uložit nový stav
         self.hass.data[f"{DOMAIN}_prev_rain_total"] = new_total
         self.hass.data[f"{DOMAIN}_prev_rain_ts"] = new_ts
-    
+
         return data
