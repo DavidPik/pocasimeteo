@@ -2,20 +2,81 @@
 
 from datetime import timedelta
 
+# ------------------------------------------------------------
+# Základní identifikace integrace
+# ------------------------------------------------------------
+
 DOMAIN = "pocasimeteo"
+DEFAULT_NAME = "PočasíMeteo"
 
+# ------------------------------------------------------------
 # Konfigurační klíče
-CONF_STATION = "station_name"      # Název stanice (pro zobrazení)
-CONF_API_KEY = "api_key"           # API klíč meteostanice
-CONF_UPDATE_INTERVAL = "update_interval"    # Interval aktualizace dat (pro senzory)
+# ------------------------------------------------------------
 
-# API endpoint pro nové PočasíMeteo API
+CONF_STATION = "station_name"          # Název meteostanice
+CONF_API_KEY = "api_key"               # API klíč meteostanice
+CONF_UPDATE_INTERVAL = "update_interval"  # Interval aktualizace dat (minuty)
+
+# ------------------------------------------------------------
+# API endpoint pro PočasíMeteo
+# ------------------------------------------------------------
+
 API_URL_TEMPLATE = (
     "https://ext.pocasimeteo.cz/ms/api/weather?KlicApi={api_key}"
 )
 
-# Interval aktualizace dat
+# Výchozí interval aktualizace
 UPDATE_INTERVAL = timedelta(minutes=5)
 
-# Výchozí hodnoty pro případné rozšíření
-DEFAULT_NAME = "PočasíMeteo"
+# ------------------------------------------------------------
+# Výchozí seznam senzorů (uživatel může rozšířit v OptionsFlow)
+# ------------------------------------------------------------
+
+DEFAULT_SENSORS = [
+    # Primární senzory
+    "TeplotaVnejsi",
+    "VlhkostVnejsi",
+    "TlakRel",
+    "Vitr",
+    "VitrSmer",
+    "UVindex",
+    "Srazky_intensity",
+
+    # Doplňkové senzory
+    "TeplotaVnitrni",
+    "VlhkostVnitrni",
+]
+
+# ------------------------------------------------------------
+# Výchozí typy senzorů (uživatel může změnit v OptionsFlow)
+# ------------------------------------------------------------
+
+DEFAULT_SENSOR_TYPES = {
+    "TeplotaVnejsi": "primary",
+    "VlhkostVnejsi": "primary",
+    "TlakRel": "primary",
+    "Vitr": "primary",
+    "VitrSmer": "primary",
+    "UVindex": "primary",
+    "Srazky_intensity": "primary",
+
+    "TeplotaVnitrni": "secondary",
+    "VlhkostVnitrni": "secondary",
+}
+
+# ------------------------------------------------------------
+# Výchozí pořadí senzorů (uživatel může změnit v OptionsFlow)
+# ------------------------------------------------------------
+
+DEFAULT_SENSOR_ORDER = {
+    "TeplotaVnejsi": 1,
+    "VlhkostVnejsi": 2,
+    "TlakRel": 3,
+    "Vitr": 4,
+    "VitrSmer": 5,
+    "UVindex": 6,
+    "Srazky_intensity": 7,
+
+    "TeplotaVnitrni": 21,
+    "VlhkostVnitrni": 22,
+}
