@@ -24,10 +24,27 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+# ------------------------------------------------------------
+# Default sensors (can be extended by user)
+# ------------------------------------------------------------
+
+DEFAULT_SENSOR_LIST = [
+    "TeplotaVnejsi",
+    "VlhkostVnejsi",
+    "TlakRel",
+    "Vitr",
+    "VitrSmer",
+    "UVindex",
+    "Srazky_intensity",
+    "TeplotaVnitrni",
+    "VlhkostVnitrni",
+]
+
+
 class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for PočasíMeteo."""
 
-    VERSION = 1
+    VERSION = 2
 
     async def async_step_user(self, user_input=None) -> FlowResult:
         """Handle the initial step."""
@@ -72,6 +89,7 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     },
                     options={
                         "forecast_entity_id": forecast_entity,
+                        "sensors": [],  # empty → user will configure in OptionsFlow
                     },
                 )
 
@@ -83,7 +101,6 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _get_schema(self):
         """Return the input form schema."""
-        # Load all weather entities for forecast selection
         registry = er.async_get(self.hass)
         weather_entities = sorted(
             [
@@ -142,3 +159,101 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return False
 
         return state.domain == "weather"
+
+    # ------------------------------------------------------------
+    # OPTIONS FLOW
+    # ------------------------------------------------------------
+
+    def async_get_options_flow(self, config_entry):
+        return PocasimeteoOptionsFlow(config_entry)
+
+
+class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
+    """Handle options for PočasíMeteo."""
+
+    def __init__(self, config_entry):
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None):
+        """Initial step: choose sensors."""
+        sensors = self.config_entry.options.get("sensors", [])
+
+        # Extract existing sensor IDs
+        existing_ids = [s["id"] for s in sensors]
+
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    "sensor_list",
+                    default=existing_ids or DEFAULT_SENSOR_LIST,
+                ): vol.All([str]),
+                vol.Optional("add_custom_sensor", default=""): str,
+            }
+        )
+
+        if user_input is not None:
+            sensor_list = user_input.get("sensor_list", [])
+            custom = user_input.get("add_custom_sensor", "").strip()
+
+            if custom:
+                sensor_list.append(custom)
+
+            # Remove duplicates
+            sensor_list = list(dict.fromkeys(sensor_list))
+
+            # Store temporarily
+            self._sensor_ids = sensor_list
+
+            return await self.async_step_types()
+
+        return self.async_show_form(step_id="init", data_schema=schema)
+
+    async def async_step_types(self, user_input=None):
+        """Step 2: assign types to sensors."""
+        sensor_ids = getattr(self, "_sensor_ids", [])
+
+        schema_dict = {}
+        for sid in sensor_ids:
+            schema_dict[
+                vol.Required(f"type_{sid}", default="primary")
+            ] = vol.In(["primary", "secondary"])
+
+        schema = vol.Schema(schema_dict)
+
+        if user_input is not None:
+            self._sensor_types = {
+                sid: user_input[f"type_{sid}"] for sid in sensor_ids
+            }
+            return await self.async_step_order()
+
+        return self.async_show_form(step_id="types", data_schema=schema)
+
+    async def async_step_order(self, user_input=None):
+        """Step 3: assign order to sensors."""
+        sensor_ids = getattr(self, "_sensor_ids", [])
+
+        schema_dict = {}
+        for sid in sensor_ids:
+            schema_dict[
+                vol.Required(f"order_{sid}", default=1)
+            ] = vol.All(int, vol.Range(min=1, max=99))
+
+        schema = vol.Schema(schema_dict)
+
+        if user_input is not None:
+            sensors_final = []
+            for sid in sensor_ids:
+                sensors_final.append(
+                    {
+                        "id": sid,
+                        "type": self._sensor_types[sid],
+                        "order": user_input[f"order_{sid}"],
+                    }
+                )
+
+            return self.async_create_entry(
+                title="Senzory",
+                data={"sensors": sensors_final},
+            )
+
+        return self.async_show_form(step_id="order", data_schema=schema)
