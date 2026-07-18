@@ -89,7 +89,7 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
         )
 
     # ----------------------------------------------------------------------
-    # CURRENT CONDITIONS (from meteostation)
+    # CURRENT CONDITIONS (converted to km/h)
     # ----------------------------------------------------------------------
 
     @property
@@ -114,19 +114,23 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
 
     @property
     def native_wind_speed(self) -> float | None:
-        return self.coordinator.data.get("Vitr")
+        """Return wind speed in km/h."""
+        v = self.coordinator.data.get("Vitr")
+        return v * 3.6 if v is not None else None
 
     @property
     def native_wind_speed_unit(self) -> str:
-        return UnitOfSpeed.METERS_PER_SECOND
+        return UnitOfSpeed.KILOMETERS_PER_HOUR
 
     @property
     def native_wind_gust_speed(self) -> float | None:
-        return self.coordinator.data.get("VitrNarazy")
+        """Return wind gust speed in km/h."""
+        v = self.coordinator.data.get("VitrNarazy")
+        return v * 3.6 if v is not None else None
 
     @property
     def native_wind_gust_unit(self) -> str:
-        return UnitOfSpeed.METERS_PER_SECOND
+        return UnitOfSpeed.KILOMETERS_PER_HOUR
 
     @property
     def native_precipitation(self) -> float | None:
@@ -205,7 +209,7 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
             "timestamp": data.get("timestamp"),
             "webcam_url": data.get("webcam_url"),
 
-            # Current values
+            # Current values (raw, not converted)
             "TeplotaVnejsi": data.get("TeplotaVnejsi"),
             "VlhkostVnejsi": data.get("VlhkostVnejsi"),
             "Vitr": data.get("Vitr"),
