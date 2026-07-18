@@ -141,67 +141,8 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
     def wind_bearing(self) -> float | None:
         return self.coordinator.data.get("VitrSmer")
 
-    @property
-    def condition(self) -> str | None:
-        return None
-
     # ----------------------------------------------------------------------
-    # ATTRIBUTES (including min/max)
-    # ----------------------------------------------------------------------
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        data = self.coordinator.data
-
-        attrs = {
-            "station_name": data.get("station_name"),
-            "timestamp": data.get("timestamp"),
-            "webcam_url": data.get("webcam_url"),
-
-            # Current values
-            "TeplotaVnejsi": data.get("TeplotaVnejsi"),
-            "VlhkostVnejsi": data.get("VlhkostVnejsi"),
-            "Vitr": data.get("Vitr"),
-            "VitrNarazy": data.get("VitrNarazy"),
-            "SrazkyDen": data.get("SrazkyDen"),
-            "TlakRel": data.get("TlakRel"),
-            "TeplotaVnitrni": data.get("TeplotaVnitrni"),
-            "VlhkostVnitrni": data.get("VlhkostVnitrni"),
-            "SlunZareni": data.get("SlunZareni"),
-            "UVindex": data.get("UVindex"),
-            "VitrSmer": data.get("VitrSmer"),
-
-            # Wind direction + statistics
-            "VitrSmer_mode": data.get("VitrSmer_mode"),
-            "VitrSmer_avg": data.get("VitrSmer_avg"),
-            "VitrSmer_var": data.get("VitrSmer_var"),
-
-            # Rain intensity (new primary sensor)
-            "SrazkyIntenzita": data.get("SrazkyIntenzita"),
-            "SrazkyIntenzita_min": data.get("SrazkyIntenzita_min"),
-            "SrazkyIntenzita_max": data.get("SrazkyIntenzita_max"),
-        }
-
-        # Add min/max for all numeric keys except SrazkyDen
-        for key in [
-            "TeplotaVnejsi",
-            "VlhkostVnejsi",
-            "Vitr",
-            "VitrNarazy",
-            "TlakRel",
-            "TeplotaVnitrni",
-            "VlhkostVnitrni",
-            "SlunZareni",
-            "UVindex",
-            "SrazkyIntenzita",
-        ]:
-            attrs[f"{key}_min"] = data.get(f"{key}_min")
-            attrs[f"{key}_max"] = data.get(f"{key}_max")
-
-        return attrs
-
-    # ----------------------------------------------------------------------
-    # CONDITION (calculated from attributes) 
+    # CONDITION (calculated from attributes)
     # ----------------------------------------------------------------------
 
     @property
@@ -250,6 +191,65 @@ class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
         if mods:
             return base + " & " + " & ".join(mods)
         return base
+
+    # ----------------------------------------------------------------------
+    # ATTRIBUTES (including min/max + sensor ordering)
+    # ----------------------------------------------------------------------
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data
+
+        attrs = {
+            "station_name": data.get("station_name"),
+            "timestamp": data.get("timestamp"),
+            "webcam_url": data.get("webcam_url"),
+
+            # Current values
+            "TeplotaVnejsi": data.get("TeplotaVnejsi"),
+            "VlhkostVnejsi": data.get("VlhkostVnejsi"),
+            "Vitr": data.get("Vitr"),
+            "VitrNarazy": data.get("VitrNarazy"),
+            "SrazkyDen": data.get("SrazkyDen"),
+            "TlakRel": data.get("TlakRel"),
+            "TeplotaVnitrni": data.get("TeplotaVnitrni"),
+            "VlhkostVnitrni": data.get("VlhkostVnitrni"),
+            "SlunZareni": data.get("SlunZareni"),
+            "UVindex": data.get("UVindex"),
+            "VitrSmer": data.get("VitrSmer"),
+
+            # Wind direction + statistics
+            "VitrSmer_mode": data.get("VitrSmer_mode"),
+            "VitrSmer_avg": data.get("VitrSmer_avg"),
+            "VitrSmer_var": data.get("VitrSmer_var"),
+
+            # Rain intensity
+            "SrazkyIntenzita": data.get("SrazkyIntenzita"),
+            "SrazkyIntenzita_min": data.get("SrazkyIntenzita_min"),
+            "SrazkyIntenzita_max": data.get("SrazkyIntenzita_max"),
+
+            # Sensor ordering for frontend card
+            "primary_sensors": data.get("primary_sensors"),
+            "secondary_sensors": data.get("secondary_sensors"),
+        }
+
+        # Add min/max for all numeric keys except SrazkyDen
+        for key in [
+            "TeplotaVnejsi",
+            "VlhkostVnejsi",
+            "Vitr",
+            "VitrNarazy",
+            "TlakRel",
+            "TeplotaVnitrni",
+            "VlhkostVnitrni",
+            "SlunZareni",
+            "UVindex",
+            "SrazkyIntenzita",
+        ]:
+            attrs[f"{key}_min"] = data.get(f"{key}_min")
+            attrs[f"{key}_max"] = data.get(f"{key}_max")
+
+        return attrs
 
     # ----------------------------------------------------------------------
     # FORECAST (from external weather entity)
