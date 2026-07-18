@@ -148,31 +148,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 data[f"{key}_max"] = None
 
         # ------------------------------------------------------------------
-        # AVG, MODE, VARIABILITY pro všechny numeric keys kromě VitrSmer
-        # ------------------------------------------------------------------
-
-        for key in float_keys_for_minmax:
-            values = []
-            for m in measurements:
-                v = _to_float(m.get(key))
-                if v is not None:
-                    values.append(v)
-
-            if values:
-                data[f"{key}_avg"] = sum(values) / len(values)
-
-                rounded = [round(v, 1) for v in values]
-                data[f"{key}_mode"] = max(set(rounded), key=rounded.count)
-
-                mean = data[f"{key}_avg"]
-                variance = sum((v - mean) ** 2 for v in values) / len(values)
-                data[f"{key}_var"] = math.sqrt(variance)
-            else:
-                data[f"{key}_avg"] = None
-                data[f"{key}_mode"] = None
-                data[f"{key}_var"] = None
-
-        # ------------------------------------------------------------------
         # Statistika směru větru (modus, cirkulární průměr, variabilita)
         # ------------------------------------------------------------------
 
