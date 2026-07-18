@@ -65,3 +65,7 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload PočasíMeteo config entry."""
     await async_unload_entry(hass, entry)
     await async_setup_entry(hass, entry)
+
+
+async def async_get_options_flow(config_entry):
+    return PocasimeteoOptionsFlowHandler(config_entry)
