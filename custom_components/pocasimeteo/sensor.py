@@ -16,7 +16,6 @@ from homeassistant.const import (
     UnitOfPressure,
     UnitOfSpeed,
     UnitOfIrradiance,
-    UnitOfPrecipitationDepth,
     CONCENTRATION_PARTS_PER_MILLION,
     CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
 )
@@ -37,8 +36,7 @@ SENSOR_DEFINITIONS = {
     "Vitr": (UnitOfSpeed.METERS_PER_SECOND, SensorDeviceClass.WIND_SPEED),
     "VitrNarazy": (UnitOfSpeed.METERS_PER_SECOND, SensorDeviceClass.WIND_SPEED),
     "VitrSmer": ("°", None),
-    "SrazkyDen": (UnitOfPrecipitationDepth.MILLIMETERS, SensorDeviceClass.PRECIPITATION),
-    "rainIntensity": ("mm/5min", None),
+    "SrazkyIntenzita": ("mm/5min", None),  # opravený název senzoru
     "SlunZareni": (UnitOfIrradiance.WATTS_PER_SQUARE_METER, None),
     "UVindex": (None, None),
     "TeplotaVnitrni": (UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
@@ -48,6 +46,7 @@ SENSOR_DEFINITIONS = {
     "Pm2": (CONCENTRATION_MICROGRAMS_PER_CUBIC_METER, SensorDeviceClass.PM25),
     "Pm1v": (CONCENTRATION_MICROGRAMS_PER_CUBIC_METER, SensorDeviceClass.PM1),
 }
+
 
 # Doplňková čidla Te1–Te5, Vl1–Vl5, VlP, VlP2
 def guess_unit_and_class(key: str):
@@ -83,6 +82,10 @@ async def async_setup_entry(
     for key, value in coordinator.data.items():
         # Přeskočíme metadata
         if key in ("raw", "meta", "station_name", "timestamp"):
+            continue
+
+        # SrazkyDen už není senzor → přeskočit
+        if key == "SrazkyDen":
             continue
 
         # Pokud je hodnota None → nemá smysl vytvářet senzor
@@ -145,6 +148,16 @@ class PocasimeteoSensor(CoordinatorEntity, SensorEntity):
                 "mode": self.coordinator.data.get("VitrSmer_mode"),
                 "avg": self.coordinator.data.get("VitrSmer_avg"),
                 "variability": self.coordinator.data.get("VitrSmer_var"),
+            }
+
+        # Intenzita srážek má min/max/avg/mode/var
+        if self._key == "SrazkyIntenzita":
+            return {
+                "min": self.coordinator.data.get("SrazkyIntenzita_min"),
+                "max": self.coordinator.data.get("SrazkyIntenzita_max"),
+                "avg": self.coordinator.data.get("SrazkyIntenzita_avg"),
+                "mode": self.coordinator.data.get("SrazkyIntenzita_mode"),
+                "variability": self.coordinator.data.get("SrazkyIntenzita_var"),
             }
 
         # Ostatní senzory mají min/max
