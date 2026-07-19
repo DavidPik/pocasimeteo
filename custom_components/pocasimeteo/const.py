@@ -25,58 +25,22 @@ API_URL_TEMPLATE = (
     "https://ext.pocasimeteo.cz/ms/api/weather?KlicApi={api_key}"
 )
 
-# Výchozí interval aktualizace
-UPDATE_INTERVAL = timedelta(minutes=5)
-
 # ------------------------------------------------------------
-# Výchozí seznam senzorů (uživatel může rozšířit v OptionsFlow)
+# Výchozí seznamy senzorů (používá config_flow + options_flow)
 # ------------------------------------------------------------
 
-DEFAULT_SENSORS = [
-    # Primární senzory
+DEFAULT_PRIMARY_SENSORS = [
     "TeplotaVnejsi",
     "VlhkostVnejsi",
     "TlakRel",
+    "SlunZareni",
     "Vitr",
+    "VitrNarazy",
     "VitrSmer",
-    "UVindex",
-    "SrazkyIntenzita",
+    "RainIntensity",
+]
 
-    # Doplňkové senzory
+DEFAULT_SECONDARY_SENSORS = [
     "TeplotaVnitrni",
     "VlhkostVnitrni",
 ]
-
-# ------------------------------------------------------------
-# Výchozí typy senzorů (uživatel může změnit v OptionsFlow)
-# ------------------------------------------------------------
-
-DEFAULT_SENSOR_TYPES = {
-    "TeplotaVnejsi": "primary",
-    "VlhkostVnejsi": "primary",
-    "TlakRel": "primary",
-    "Vitr": "primary",
-    "VitrSmer": "primary",
-    "UVindex": "primary",
-    "SrazkyIntenzita": "primary",
-
-    "TeplotaVnitrni": "secondary",
-    "VlhkostVnitrni": "secondary",
-}
-
-# ------------------------------------------------------------
-# Výchozí pořadí senzorů (uživatel může změnit v OptionsFlow)
-# ------------------------------------------------------------
-
-DEFAULT_SENSOR_ORDER = {
-    "TeplotaVnejsi": 1,
-    "VlhkostVnejsi": 2,
-    "TlakRel": 3,
-    "Vitr": 4,
-    "VitrSmer": 5,
-    "UVindex": 6,
-    "SrazkyIntenzita": 7,
-
-    "TeplotaVnitrni": 21,
-    "VlhkostVnitrni": 22,
-}
