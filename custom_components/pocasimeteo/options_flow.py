@@ -1,7 +1,22 @@
-from homeassistant import config_entries
 import voluptuous as vol
+from homeassistant import config_entries
 
 from .const import DOMAIN
+
+DEFAULT_PRIMARY = [
+    "TeplotaVnejsi",
+    "VlhkostVnejsi",
+    "TlakRel",
+    "SlunZareni",
+    "Vitr",
+    "VitrNarazy",
+    "VitrSmer",
+]
+
+DEFAULT_SECONDARY = [
+    "TeplotaVnitrni",
+    "VlhkostVnitrni",
+]
 
 
 def _safe_list(value):
@@ -15,60 +30,105 @@ def _safe_list(value):
     return []
 
 
-class PocasimeteoOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options flow for PočasíMeteo."""
+class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
+    """Handle options for PočasíMeteo."""
 
     def __init__(self, config_entry):
         self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
-        return await self.async_step_user()
-
-    async def async_step_user(self, user_input=None):
+        """Step 1: choose sensors."""
         options = self.config_entry.options
 
-        # --- SAFE DEFAULTS ---
-        update_interval_default = options.get("update_interval", 60)
-        primary_default = _safe_list(options.get("primary_sensors"))
-        secondary_default = _safe_list(options.get("secondary_sensors"))
-        forecast_default = options.get("forecast_entity_id", "")
+        sensors = options.get("sensors", [])
+        existing_ids = [s["id"] for s in sensors]
+
+        default_ids = existing_ids or (DEFAULT_PRIMARY + DEFAULT_SECONDARY)
+
+        schema = vol.Schema(
+            {
+                vol.Optional("sensor_list", default=default_ids): vol.All([str]),
+                vol.Optional("add_custom_sensor", default=""): str,
+            }
+        )
 
         if user_input is not None:
-            # Convert multiline text → list
-            primary = _safe_list(user_input.get("primary_sensors"))
-            secondary = _safe_list(user_input.get("secondary_sensors"))
+            sensor_list = user_input.get("sensor_list", [])
+            custom = user_input.get("add_custom_sensor", "").strip()
 
-            new_options = {
-                "update_interval": user_input.get("update_interval", 60),
-                "primary_sensors": primary,
-                "secondary_sensors": secondary,
-                "forecast_entity_id": user_input.get("forecast_entity_id", "")
+            if custom:
+                sensor_list.append(custom)
+
+            sensor_list = list(dict.fromkeys(sensor_list))
+
+            self._sensor_ids = sensor_list
+
+            return await self.async_step_types()
+
+        return self.async_show_form(step_id="init", data_schema=schema)
+
+    async def async_step_types(self, user_input=None):
+        """Step 2: assign types to sensors."""
+        sensor_ids = getattr(self, "_sensor_ids", [])
+
+        schema_dict = {}
+        for sid in sensor_ids:
+            default_type = "primary" if sid in DEFAULT_PRIMARY else "secondary"
+            schema_dict[
+                vol.Required(f"type_{sid}", default=default_type)
+            ] = vol.In(["primary", "secondary"])
+
+        schema = vol.Schema(schema_dict)
+
+        if user_input is not None:
+            self._sensor_types = {
+                sid: user_input[f"type_{sid}"] for sid in sensor_ids
             }
+            return await self.async_step_order()
 
-            return self.async_create_entry(title="", data=new_options)
+        return self.async_show_form(step_id="types", data_schema=schema)
 
-        # --- SHOW FORM ---
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({
-                vol.Optional(
-                    "update_interval",
-                    default=update_interval_default
-                ): int,
+    async def async_step_order(self, user_input=None):
+        """Step 3: assign order to sensors."""
+        sensor_ids = getattr(self, "_sensor_ids", [])
 
-                vol.Optional(
-                    "primary_sensors",
-                    default="\n".join(primary_default)
-                ): str,
+        schema_dict = {}
+        for sid in sensor_ids:
+            schema_dict[
+                vol.Required(f"order_{sid}", default=1)
+            ] = vol.All(int, vol.Range(min=1, max=99))
 
-                vol.Optional(
-                    "secondary_sensors",
-                    default="\n".join(secondary_default)
-                ): str,
+        schema = vol.Schema(schema_dict)
 
-                vol.Optional(
-                    "forecast_entity_id",
-                    default=forecast_default
-                ): str,
-            })
-        )
+        if user_input is not None:
+            sensors_final = []
+            primary_list = []
+            secondary_list = []
+
+            for sid in sensor_ids:
+                typ = self._sensor_types[sid]
+                order = user_input[f"order_{sid}"]
+
+                sensors_final.append(
+                    {
+                        "id": sid,
+                        "type": typ,
+                        "order": order,
+                    }
+                )
+
+                if typ == "primary":
+                    primary_list.append(sid)
+                else:
+                    secondary_list.append(sid)
+
+            return self.async_create_entry(
+                title="Senzory",
+                data={
+                    "sensors": sensors_final,
+                    "primary_sensors": primary_list,
+                    "secondary_sensors": secondary_list,
+                },
+            )
+
+        return self.async_show_form(step_id="order", data_schema=schema)
