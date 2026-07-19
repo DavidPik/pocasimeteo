@@ -30,7 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle initial configuration flow for PočasíMeteo."""
 
-    VERSION = 1
+    VERSION = 3
 
     # ----------------------------------------------------------------------
     # Step: User input
