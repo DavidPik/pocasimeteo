@@ -157,3 +157,4 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             # Attach stats to entity attributes
             payload["attributes"]["min"] = stats["min"]
             payload["attributes"]["max"] = stats["max"]
+            
