@@ -147,4 +147,4 @@ class PocasimeteoSensor(SensorEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Remove coordinator listener."""
-        self.coordinator.async_remove_listener(self.async_write_ha_state)
+        self.coordinator.remove_listener(self.async_write_ha_state)
