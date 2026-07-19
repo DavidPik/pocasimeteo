@@ -64,3 +64,4 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_get_options_flow(config_entry: ConfigEntry) -> PocasimeteoOptionsFlow:
     """Return the options flow handler."""
     return PocasimeteoOptionsFlow(config_entry)
+    
