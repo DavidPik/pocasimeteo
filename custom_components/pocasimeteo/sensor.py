@@ -1,183 +1,150 @@
-"""Dynamic sensor platform for PočasíMeteo."""
+"""Sensor entities for PočasíMeteo integration.
+
+This module contains ONLY:
+- entity creation based on config entry options,
+- mapping coordinator data to Home Assistant sensor entities,
+- exposing min/max/timestamp attributes (computed in coordinator),
+- using centralized metadata from const.py.
+
+All structural definitions (names, units, icons, API mapping)
+are stored in const.py.
+"""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from homeassistant.components.sensor import (
-    SensorEntity,
-    SensorDeviceClass,
-    SensorStateClass,
-)
-from homeassistant.const import (
-    UnitOfTemperature,
-    PERCENTAGE,
-    UnitOfPressure,
-    UnitOfSpeed,
-    UnitOfIrradiance,
-    CONCENTRATION_PARTS_PER_MILLION,
-    CONCENTRATION_MICROGRAMS_PER_CUBIC_METER,
-)
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import DOMAIN, SENSOR_DEFINITIONS
+from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
-# Mapování klíčů API → jednotky + device_class
-SENSOR_DEFINITIONS = {
-    "TeplotaVnejsi": (UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
-    "VlhkostVnejsi": (PERCENTAGE, SensorDeviceClass.HUMIDITY),
-    "TlakRel": (UnitOfPressure.HPA, SensorDeviceClass.PRESSURE),
-    "Vitr": (UnitOfSpeed.METERS_PER_SECOND, SensorDeviceClass.WIND_SPEED),
-    "VitrNarazy": (UnitOfSpeed.METERS_PER_SECOND, SensorDeviceClass.WIND_SPEED),
-    "VitrSmer": ("°", None),
-    "SrazkyIntenzita": ("mm/5min", None),
-    "SlunZareni": (UnitOfIrradiance.WATTS_PER_SQUARE_METER, None),
-    "UVindex": (None, None),
-    "TeplotaVnitrni": (UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE),
-    "VlhkostVnitrni": (PERCENTAGE, SensorDeviceClass.HUMIDITY),
-    "Co2": (CONCENTRATION_PARTS_PER_MILLION, SensorDeviceClass.CO2),
-    "Pm1": (CONCENTRATION_MICROGRAMS_PER_CUBIC_METER, SensorDeviceClass.PM1),
-    "Pm2": (CONCENTRATION_MICROGRAMS_PER_CUBIC_METER, SensorDeviceClass.PM25),
-    "Pm1v": (CONCENTRATION_MICROGRAMS_PER_CUBIC_METER, SensorDeviceClass.PM1),
-}
-
-
-# Doplňková čidla Te1–Te5, Vl1–Vl5, VlP, VlP2
-def guess_unit_and_class(key: str):
-    """Heuristika pro doplňková čidla."""
-    k = key.lower()
-
-    if k.startswith("te"):
-        return UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE
-
-    if k.startswith("vl"):
-        return PERCENTAGE, SensorDeviceClass.HUMIDITY
-
-    if "co2" in k:
-        return CONCENTRATION_PARTS_PER_MILLION, SensorDeviceClass.CO2
-
-    if "pm" in k:
-        return CONCENTRATION_MICROGRAMS_PER_CUBIC_METER, SensorDeviceClass.PM25
-
-    return None, None
-
-
+# ---------------------------------------------------------------------------
+# Setup entry: create sensor entities based on options["sensors"]
+# ---------------------------------------------------------------------------
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities,
-):
-    """Set up PočasíMeteo sensors."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up PočasíMeteo sensor entities."""
+    coordinator: PocasimeteoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    sensors = []
+    sensors_opt = entry.options.get("sensors", [])
+    entities: list[PocasimeteoSensor] = []
 
-    # Projdeme všechna data z API
-    for key, value in coordinator.data.items():
+    for sensor_def in sensors_opt:
+        sid = sensor_def["id"]
+        s_type = sensor_def["type"]
+        order = sensor_def["order"]
 
-        # Přeskočíme metadata
-        if key in ("raw", "meta", "station_name", "timestamp"):
+        meta = SENSOR_DEFINITIONS.get(sid)
+
+        if meta is None:
+            # Custom sensor (not defined in const.py)
+            entities.append(
+                PocasimeteoSensor(
+                    coordinator=coordinator,
+                    sensor_id=sid,
+                    name=sid,
+                    unit=None,
+                    icon="mdi:help-circle",
+                    sensor_type=s_type,
+                    order=order,
+                )
+            )
             continue
 
-        # SrazkyDen už není senzor → přeskočit
-        if key == "SrazkyDen":
-            continue
-
-        # Pokud je hodnota None → nemá smysl vytvářet senzor
-        if value is None:
-            continue
-
-        # Najdi definici senzoru
-        if key in SENSOR_DEFINITIONS:
-            unit, device_class = SENSOR_DEFINITIONS[key]
-        else:
-            unit, device_class = guess_unit_and_class(key)
-
-        # Pokud ani heuristika nic nenašla → přeskočíme
-        if unit is None and device_class is None:
-            continue
-
-        sensors.append(
+        # Standard sensor
+        entities.append(
             PocasimeteoSensor(
                 coordinator=coordinator,
-                entry=entry,
-                key=key,
-                unit=unit,
-                device_class=device_class,
+                sensor_id=sid,
+                name=meta["name"],
+                unit=meta["unit"],
+                icon=meta["icon"],
+                sensor_type=s_type,
+                order=order,
             )
         )
 
-    async_add_entities(sensors, update_before_add=True)
+    async_add_entities(entities)
 
 
-class PocasimeteoSensor(CoordinatorEntity, SensorEntity):
-    """Representation of a PočasíMeteo sensor."""
+# ---------------------------------------------------------------------------
+# Sensor Entity
+# ---------------------------------------------------------------------------
+class PocasimeteoSensor(SensorEntity):
+    """Representation of a single PočasíMeteo sensor."""
 
-    def __init__(self, coordinator, entry, key, unit, device_class):
-        super().__init__(coordinator)
-        self._entry = entry
-        self._key = key
-        self._unit = unit
-        self._attr_device_class = device_class
+    _attr_should_poll = False
 
-        station = coordinator.data.get("station_name", entry.title)
-        self._attr_name = f"{station} {key}"
-        self._attr_unique_id = f"{entry.entry_id}_{key}"
+    def __init__(
+        self,
+        coordinator: PocasimeteoDataUpdateCoordinator,
+        sensor_id: str,
+        name: str,
+        unit: str | None,
+        icon: str,
+        sensor_type: str,
+        order: int,
+    ) -> None:
+        self.coordinator = coordinator
+        self._sensor_id = sensor_id
+        self._attr_name = name
+        self._attr_icon = icon
+        self._attr_native_unit_of_measurement = unit
+        self._sensor_type = sensor_type
+        self._order = order
 
-        # Většina senzorů je měřená → measurement
-        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_{sensor_id}"
 
+    # ------------------------------------------------------------------
+    # Coordinator update hook
+    # ------------------------------------------------------------------
     @property
-    def device_info(self) -> DeviceInfo:
-        """Device metadata for grouping sensors under one device."""
+    def available(self) -> bool:
+        """Entity is available if coordinator has data for this sensor."""
         data = self.coordinator.data
-        station_name = data.get("station_name", self._entry.title)
-        meta = data.get("meta") or {}
-
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name=station_name,
-            manufacturer="PočasíMeteo",
-            model=meta.get("TypStanice") or "Meteostanice",
-            sw_version=meta.get("VerzeFw") or None,
-        )
+        return data is not None and self._sensor_id in data
 
     @property
     def native_value(self) -> Any:
-        return self.coordinator.data.get(self._key)
+        """Return the sensor's main value."""
+        data = self.coordinator.data
+        if not data:
+            return None
+
+        payload = data.get(self._sensor_id)
+        if not payload:
+            return None
+
+        return payload.get("value")
 
     @property
-    def native_unit_of_measurement(self):
-        return self._unit
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return additional attributes (min/max/timestamp)."""
+        data = self.coordinator.data
+        if not data:
+            return {}
 
-    @property
-    def extra_state_attributes(self):
-        """Return extra attributes such as min/max or wind statistics."""
+        payload = data.get(self._sensor_id)
+        if not payload:
+            return {}
 
-        # Směr větru → avg/mode/var
-        if self._key == "VitrSmer":
-            return {
-                "mode": self.coordinator.data.get("VitrSmer_mode"),
-                "avg": self.coordinator.data.get("VitrSmer_avg"),
-                "variability": self.coordinator.data.get("VitrSmer_var"),
-            }
+        return payload.get("attributes", {})
 
-        # Intenzita srážek → min/max
-        if self._key == "SrazkyIntenzita":
-            return {
-                "min": self.coordinator.data.get("SrazkyIntenzita_min"),
-                "max": self.coordinator.data.get("SrazkyIntenzita_max"),
-            }
+    async def async_added_to_hass(self) -> None:
+        """Register coordinator listener."""
+        self.coordinator.async_add_listener(self.async_write_ha_state)
 
-        # Ostatní senzory → min/max
-        return {
-            "min": self.coordinator.data.get(f"{self._key}_min"),
-            "max": self.coordinator.data.get(f"{self._key}_max"),
-        }
+    async def async_will_remove_from_hass(self) -> None:
+        """Remove coordinator listener."""
+        self.coordinator.async_remove_listener(self.async_write_ha_state)
