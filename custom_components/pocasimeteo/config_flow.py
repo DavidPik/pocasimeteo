@@ -23,19 +23,17 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-
-# ------------------------------------------------------------
-# Default sensors (can be extended by user)
-# ------------------------------------------------------------
-
-DEFAULT_SENSOR_LIST = [
+DEFAULT_PRIMARY = [
     "TeplotaVnejsi",
     "VlhkostVnejsi",
     "TlakRel",
+    "SlunZareni",
     "Vitr",
+    "VitrNarazy",
     "VitrSmer",
-    "UVindex",
-    "SrazkyIntenzita",
+]
+
+DEFAULT_SECONDARY = [
     "TeplotaVnitrni",
     "VlhkostVnitrni",
 ]
@@ -44,7 +42,7 @@ DEFAULT_SENSOR_LIST = [
 class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for PočasíMeteo."""
 
-    VERSION = 2
+    VERSION = 3
 
     async def async_step_user(self, user_input=None) -> FlowResult:
         """Handle the initial step."""
@@ -80,6 +78,7 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(api_key)
                 self._abort_if_unique_id_configured()
 
+                # Create full options structure
                 return self.async_create_entry(
                     title=station_name,
                     data={
@@ -88,8 +87,17 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_UPDATE_INTERVAL: interval,
                     },
                     options={
-                        "forecast_entity_id": forecast_entity,
-                        "sensors": [],  # empty → user will configure in OptionsFlow
+                        "update_interval": interval,
+                        "forecast_entity_id": forecast_entity or "",
+                        "primary_sensors": DEFAULT_PRIMARY.copy(),
+                        "secondary_sensors": DEFAULT_SECONDARY.copy(),
+                        "sensors": [
+                            {"id": sid, "type": "primary", "order": i + 1}
+                            for i, sid in enumerate(DEFAULT_PRIMARY)
+                        ] + [
+                            {"id": sid, "type": "secondary", "order": 100 + i}
+                            for i, sid in enumerate(DEFAULT_SECONDARY)
+                        ],
                     },
                 )
 
@@ -175,17 +183,15 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
         self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
-        """Initial step: choose sensors."""
         sensors = self.config_entry.options.get("sensors", [])
 
-        # Extract existing sensor IDs
         existing_ids = [s["id"] for s in sensors]
 
         schema = vol.Schema(
             {
                 vol.Optional(
                     "sensor_list",
-                    default=existing_ids or DEFAULT_SENSOR_LIST,
+                    default=existing_ids or DEFAULT_PRIMARY + DEFAULT_SECONDARY,
                 ): vol.All([str]),
                 vol.Optional("add_custom_sensor", default=""): str,
             }
@@ -198,10 +204,8 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
             if custom:
                 sensor_list.append(custom)
 
-            # Remove duplicates
             sensor_list = list(dict.fromkeys(sensor_list))
 
-            # Store temporarily
             self._sensor_ids = sensor_list
 
             return await self.async_step_types()
@@ -209,7 +213,6 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(step_id="init", data_schema=schema)
 
     async def async_step_types(self, user_input=None):
-        """Step 2: assign types to sensors."""
         sensor_ids = getattr(self, "_sensor_ids", [])
 
         schema_dict = {}
@@ -229,7 +232,6 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(step_id="types", data_schema=schema)
 
     async def async_step_order(self, user_input=None):
-        """Step 3: assign order to sensors."""
         sensor_ids = getattr(self, "_sensor_ids", [])
 
         schema_dict = {}
