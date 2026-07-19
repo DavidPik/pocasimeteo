@@ -178,3 +178,4 @@ class PocasimeteoWeather(WeatherEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         self.coordinator.remove_listener(self.async_write_ha_state)
+        
