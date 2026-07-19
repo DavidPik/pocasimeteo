@@ -1,248 +1,159 @@
-"""Data update coordinator for PočasíMeteo."""
+"""Data update coordinator for PočasíMeteo integration.
+
+This module contains ONLY logic for:
+- fetching data from PočasíMeteo API,
+- mapping API fields to internal sensor IDs (defined in const.py),
+- preparing a clean data structure for sensor/weather entities,
+- computing lightweight daily statistics (min/max) as attributes.
+
+All structural definitions (sensor metadata, API mapping, units, icons)
+are centralized in const.py.
+"""
 
 from __future__ import annotations
 
 import logging
-from datetime import timedelta, datetime
-import math
+from datetime import datetime, date
 
-import aiohttp
 import async_timeout
-
-from homeassistant.helpers import aiohttp_client
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import (
+    DataUpdateCoordinator,
+    UpdateFailed,
+)
+from homeassistant.helpers import aiohttp_client
 
 from .const import (
     DOMAIN,
-    CONF_STATION,
+    API_URL_TEMPLATE,
     CONF_API_KEY,
     CONF_UPDATE_INTERVAL,
-    API_URL_TEMPLATE,
+    SENSOR_DEFINITIONS,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
-    """Coordinator for fetching PočasíMeteo data."""
+    """Coordinator responsible for fetching and normalizing PočasíMeteo data."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    def __init__(self, hass: HomeAssistant, entry):
         self.hass = hass
-        self.station_name = entry.data[CONF_STATION]
-        self.api_key = entry.data[CONF_API_KEY]
+        self.entry = entry
 
-        interval_minutes = entry.data.get(CONF_UPDATE_INTERVAL, 5)
+        update_interval_minutes = entry.data.get(CONF_UPDATE_INTERVAL, 5)
 
         super().__init__(
             hass,
             _LOGGER,
-            name=f"{DOMAIN}_{self.station_name}",
-            update_interval=timedelta(minutes=interval_minutes),
+            name=f"{DOMAIN}_{entry.entry_id}",
+            update_interval=None,  # dynamic interval below
         )
 
-        self.api_url = API_URL_TEMPLATE.format(api_key=self.api_key)
+        # Convert minutes to timedelta
+        from datetime import timedelta
 
+        self.update_interval = timedelta(minutes=update_interval_minutes)
+
+        # Daily statistics storage (in-memory, reset at midnight)
+        self._daily_stats: dict[str, dict[str, float]] = {}
+
+    # ----------------------------------------------------------------------
+    # Fetch data from API
+    # ----------------------------------------------------------------------
     async def _async_update_data(self):
-        """Fetch data from PočasíMeteo API."""
+        """Fetch and normalize data from PočasíMeteo API."""
+        api_key = self.entry.data[CONF_API_KEY]
+        url = API_URL_TEMPLATE.format(api_key=api_key)
+
         try:
             session = aiohttp_client.async_get_clientsession(self.hass)
-
             async with async_timeout.timeout(20):
-                async with session.get(self.api_url, timeout=15) as response:
-                    if response.status != 200:
-                        raise UpdateFailed(f"API returned HTTP {response.status}")
-
-                    raw = await response.json()
-
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        raise UpdateFailed(f"HTTP {resp.status}")
+                    raw = await resp.json()
         except Exception as err:
-            raise UpdateFailed(f"Error communicating with API: {err}") from err
+            raise UpdateFailed(f"API request failed: {err}") from err
 
-        # Normalize API formats
-        if isinstance(raw, dict) and "data" in raw:
-            records = raw["data"]
-        elif isinstance(raw, dict) and raw.get("Zprava") == "Posilame data":
-            records = [raw]
-        elif isinstance(raw, list):
-            records = raw
-        else:
+        # API returns either list or dict; normalize to dict
+        if isinstance(raw, list) and raw:
+            raw = raw[0]
+        if not isinstance(raw, dict):
             raise UpdateFailed("Invalid API response format")
 
-        if not records:
-            raise UpdateFailed("API returned empty dataset")
+        # Normalize data into internal structure
+        normalized = self._normalize_data(raw)
 
-        # Metadata vs measurements
-        if records and (
-            records[0].get("LokalitaStanice")
-            or records[0].get("DoplCidlaJson")
-        ):
-            meta = records[0]
-            measurements = records[1:]
-        else:
-            meta = None
-            measurements = records
+        # Update daily statistics (min/max)
+        self._update_daily_stats(normalized)
 
-        if not measurements:
-            raise UpdateFailed("No measurement records in API response")
+        return normalized
 
-        current = measurements[-1]
+    # ----------------------------------------------------------------------
+    # Normalize API payload into internal sensor structure
+    # ----------------------------------------------------------------------
+    def _normalize_data(self, raw: dict) -> dict[str, dict[str, float]]:
+        """Convert API fields into internal sensor IDs defined in const.py.
 
-        # Helper: safe float conversion
-        def _to_float(value):
-            if value in (None, "", "-", "—"):
-                return None
-            try:
-                return float(str(value).replace(",", "."))
-            except (TypeError, ValueError):
-                return None
+        Output format:
+            {
+                "TeplotaVnejsi": {
+                    "value": 23.4,
+                    "attributes": {
+                        "min": 12.1,
+                        "max": 27.8,
+                        "timestamp": "2026-07-19T19:58:00+02:00"
+                    }
+                },
+                ...
+            }
+        """
+        result: dict[str, dict] = {}
+        timestamp = datetime.now().isoformat()
 
-        # Keys that should be numeric (from API)
-        FLOAT_KEYS = {
-            "TeplotaVnejsi",
-            "VlhkostVnejsi",
-            "Vitr",
-            "VitrNarazy",
-            "SrazkyDen",
-            "TlakRel",
-            "TeplotaVnitrni",
-            "VlhkostVnitrni",
-            "SlunZareni",
-            "UVindex",
-            "VitrSmer",
-        }
+        for sid, meta in SENSOR_DEFINITIONS.items():
+            api_key = meta["api_key"]
+            value = raw.get(api_key)
 
-        # Base data dict
-        data: dict[str, object] = {
-            "station_name": self.station_name,
-            "timestamp": current.get("Datum"),
-            "meta": meta,
-            "measurements": measurements,
-        }
+            if value is None:
+                continue
 
-        # Fill normalized values
-        for key, value in current.items():
-            if key in FLOAT_KEYS:
-                data[key] = _to_float(value)
-            else:
-                data[key] = value
+            result[sid] = {
+                "value": value,
+                "attributes": {
+                    "timestamp": timestamp,
+                    # min/max added later by _update_daily_stats()
+                },
+            }
 
-        # ------------------------------------------------------------------
-        # MIN/MAX výpočty pro všechny veličiny kromě VitrSmer
-        # ------------------------------------------------------------------
+        return result
 
-        float_keys_for_minmax = FLOAT_KEYS - {"VitrSmer"}
+    # ----------------------------------------------------------------------
+    # Daily min/max statistics (in-memory)
+    # ----------------------------------------------------------------------
+    def _update_daily_stats(self, data: dict[str, dict]):
+        """Compute daily min/max values for each sensor.
 
-        for key in float_keys_for_minmax:
-            values = []
-            for m in measurements:
-                v = _to_float(m.get(key))
-                if v is not None:
-                    values.append(v)
+        These statistics are stored only in memory and reset at midnight.
+        They are exposed as attributes of each sensor entity.
+        """
+        today = date.today()
 
-            if values:
-                data[f"{key}_min"] = min(values)
-                data[f"{key}_max"] = max(values)
-            else:
-                data[f"{key}_min"] = None
-                data[f"{key}_max"] = None
+        # Reset stats at midnight
+        if "_date" not in self._daily_stats or self._daily_stats["_date"] != today:
+            self._daily_stats = {"_date": today}
 
-        # ------------------------------------------------------------------
-        # Statistika směru větru (modus, cirkulární průměr, variabilita)
-        # ------------------------------------------------------------------
+        for sid, payload in data.items():
+            value = payload["value"]
 
-        angles = []
-        for m in measurements:
-            v = _to_float(m.get("VitrSmer"))
-            if v is not None:
-                angles.append(v)
+            stats = self._daily_stats.setdefault(sid, {"min": value, "max": value})
 
-        if angles:
-            bins = [0] * 12
-            for a in angles:
-                idx = int((a % 360) / 30)
-                bins[idx] += 1
-            mode_sector = bins.index(max(bins))
-            data["VitrSmer_mode"] = mode_sector * 30
+            if value < stats["min"]:
+                stats["min"] = value
+            if value > stats["max"]:
+                stats["max"] = value
 
-            angles_rad = [math.radians(a) for a in angles]
-            avg_sin = sum(math.sin(a) for a in angles_rad) / len(angles_rad)
-            avg_cos = sum(math.cos(a) for a in angles_rad) / len(angles_rad)
-            avg_angle = math.degrees(math.atan2(avg_sin, avg_cos))
-            if avg_angle < 0:
-                avg_angle += 360
-            data["VitrSmer_avg"] = avg_angle
-
-            R = math.sqrt(avg_sin**2 + avg_cos**2)
-            data["VitrSmer_var"] = 1 - R
-        else:
-            data["VitrSmer_mode"] = None
-            data["VitrSmer_avg"] = None
-            data["VitrSmer_var"] = None
-
-        # ------------------------------------------------------------------
-        # Výpočet okamžité intenzity srážek → SrazkyIntenzita
-        # ------------------------------------------------------------------
-
-        prev_total = self.hass.data.get(f"{DOMAIN}_prev_rain_total")
-        prev_ts = self.hass.data.get(f"{DOMAIN}_prev_rain_ts")
-
-        new_total = data.get("SrazkyDen")
-        new_ts = data.get("timestamp")
-
-        rain_intensity = None
-
-        if prev_total is not None and new_total is not None and prev_ts and new_ts:
-            try:
-                dt = (datetime.fromisoformat(new_ts) - datetime.fromisoformat(prev_ts)).total_seconds() / 60
-                if dt > 0:
-                    intervals = max(1, round(dt / 5))
-                    delta = new_total - prev_total
-
-                    if delta < 0:
-                        rain_intensity = 0
-                    else:
-                        rain_intensity = delta / intervals
-            except Exception:
-                rain_intensity = None
-
-        data["SrazkyIntenzita"] = rain_intensity
-
-        # Min/max pro SrazkyIntenzita
-        if rain_intensity is not None:
-            data["SrazkyIntenzita_min"] = rain_intensity
-            data["SrazkyIntenzita_max"] = rain_intensity
-        else:
-            data["SrazkyIntenzita_min"] = None
-            data["SrazkyIntenzita_max"] = None
-
-        # uložit nový stav
-        self.hass.data[f"{DOMAIN}_prev_rain_total"] = new_total
-        self.hass.data[f"{DOMAIN}_prev_rain_ts"] = new_ts
-
-        # ------------------------------------------------------------------
-        # Seznam základních a doplňkových senzorů pro frontend kartu
-        # ------------------------------------------------------------------
-
-        data["primary_sensors"] = [
-            "TeplotaVnejsi",
-            "VlhkostVnejsi",
-            "TlakRel",
-            "Vitr",
-            "VitrNarazy",
-            "VitrSmer",
-        ]
-
-        data["secondary_sensors"] = [
-            "RainIntensity",
-            "SlunZareni",
-            "UVindex",
-            "TeplotaVnitrni",
-            "VlhkostVnitrni",
-            "CO2",
-            "PM1",
-            "PM2",
-            "PM1v",
-        ]
-
-        return data
+            # Attach stats to entity attributes
+            payload["attributes"]["min"] = stats["min"]
+            payload["attributes"]["max"] = stats["max"]
