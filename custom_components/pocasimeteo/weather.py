@@ -56,7 +56,7 @@ class PocasimeteoWeather(WeatherEntity):
     """Representation of PočasíMeteo weather summary."""
 
     _attr_should_poll = False
-    _attr_supported_features = WeatherEntityFeature.NONE
+    _attr_supported_features = 0
 
     def __init__(self, coordinator: PocasimeteoDataUpdateCoordinator) -> None:
         self.coordinator = coordinator
