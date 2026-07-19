@@ -19,42 +19,32 @@ from .const import (
     CONF_API_KEY,
     CONF_UPDATE_INTERVAL,
     API_URL_TEMPLATE,
+    DEFAULT_UPDATE_INTERVAL_MINUTES,
+    DEFAULT_SENSORS_OPTIONS,
+    DEFAULT_ALL_SENSOR_IDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-DEFAULT_PRIMARY = [
-    "TeplotaVnejsi",
-    "VlhkostVnejsi",
-    "TlakRel",
-    "SlunZareni",
-    "Vitr",
-    "VitrNarazy",
-    "VitrSmer",
-]
-
-DEFAULT_SECONDARY = [
-    "TeplotaVnitrni",
-    "VlhkostVnitrni",
-]
-
 
 class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for PočasíMeteo."""
+    """Handle initial configuration flow for PočasíMeteo."""
 
-    VERSION = 3
+    VERSION = 1
 
+    # ----------------------------------------------------------------------
+    # Step: User input
+    # ----------------------------------------------------------------------
     async def async_step_user(self, user_input=None) -> FlowResult:
-        """Handle the initial step."""
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
-            station_name = user_input.get(CONF_STATION)
-            api_key = user_input.get(CONF_API_KEY)
-            interval = user_input.get(CONF_UPDATE_INTERVAL)
+            station_name = user_input[CONF_STATION]
+            api_key = user_input[CONF_API_KEY]
+            interval = user_input[CONF_UPDATE_INTERVAL]
             forecast_entity = user_input.get("forecast_entity_id")
 
-            # Validate interval
+            # Validate update interval
             try:
                 interval = int(interval)
                 if interval < 1 or interval > 30:
@@ -62,10 +52,9 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except Exception:
                 errors["base"] = "invalid_interval"
 
-            # Validate API key
+            # Validate API key by calling PočasíMeteo API
             if not errors:
-                is_valid = await self._async_validate_api_key(self.hass, api_key)
-                if not is_valid:
+                if not await self._async_validate_api_key(self.hass, api_key):
                     errors["base"] = "invalid_api_key"
 
             # Validate forecast entity
@@ -73,12 +62,11 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not self._is_valid_forecast_entity(self.hass, forecast_entity):
                     errors["base"] = "invalid_forecast_entity"
 
+            # Create entry
             if not errors:
-                # Unique ID = API key
                 await self.async_set_unique_id(api_key)
                 self._abort_if_unique_id_configured()
 
-                # Create full options structure
                 return self.async_create_entry(
                     title=station_name,
                     data={
@@ -89,15 +77,8 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     options={
                         "update_interval": interval,
                         "forecast_entity_id": forecast_entity or "",
-                        "primary_sensors": DEFAULT_PRIMARY.copy(),
-                        "secondary_sensors": DEFAULT_SECONDARY.copy(),
-                        "sensors": [
-                            {"id": sid, "type": "primary", "order": i + 1}
-                            for i, sid in enumerate(DEFAULT_PRIMARY)
-                        ] + [
-                            {"id": sid, "type": "secondary", "order": 100 + i}
-                            for i, sid in enumerate(DEFAULT_SECONDARY)
-                        ],
+                        # Only one canonical structure: list of sensor objects
+                        "sensors": DEFAULT_SENSORS_OPTIONS.copy(),
                     },
                 )
 
@@ -107,8 +88,10 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def _get_schema(self):
-        """Return the input form schema."""
+    # ----------------------------------------------------------------------
+    # Schema for initial form
+    # ----------------------------------------------------------------------
+    async def _get_schema(self) -> vol.Schema:
         registry = er.async_get(self.hass)
         weather_entities = sorted(
             [
@@ -122,41 +105,46 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required(CONF_STATION): str,
                 vol.Required(CONF_API_KEY): str,
-                vol.Required(CONF_UPDATE_INTERVAL, default=5): vol.All(int, vol.Range(min=1, max=30)),
+                vol.Required(
+                    CONF_UPDATE_INTERVAL,
+                    default=DEFAULT_UPDATE_INTERVAL_MINUTES,
+                ): vol.All(int, vol.Range(min=1, max=30)),
                 vol.Optional("forecast_entity_id", default=None): vol.In(
                     [None] + weather_entities
                 ),
             }
         )
 
+    # ----------------------------------------------------------------------
+    # API key validation
+    # ----------------------------------------------------------------------
     async def _async_validate_api_key(self, hass: HomeAssistant, api_key: str) -> bool:
         """Validate API key by calling PočasíMeteo API."""
         url = API_URL_TEMPLATE.format(api_key=api_key)
 
         try:
             session = aiohttp_client.async_get_clientsession(hass)
-
             async with async_timeout.timeout(10):
                 async with session.get(url) as resp:
                     if resp.status != 200:
                         _LOGGER.warning("API returned HTTP %s", resp.status)
                         return False
-
                     data = await resp.json()
-
         except Exception as err:
             _LOGGER.error("API validation error: %s", err)
             return False
 
-        # API may return list or dict
-        if isinstance(data, list) and len(data) > 0:
+        # API returns either list or dict
+        if isinstance(data, list) and data:
             return True
-
         if isinstance(data, dict) and ("data" in data or "Zprava" in data):
             return True
 
         return False
 
+    # ----------------------------------------------------------------------
+    # Forecast entity validation
+    # ----------------------------------------------------------------------
     def _is_valid_forecast_entity(self, hass: HomeAssistant, entity_id: str) -> bool:
         """Check if selected entity exists and is a weather entity."""
         if not entity_id:
@@ -168,31 +156,33 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return state.domain == "weather"
 
-    # ------------------------------------------------------------
-    # OPTIONS FLOW
-    # ------------------------------------------------------------
-
+    # ----------------------------------------------------------------------
+    # Options flow
+    # ----------------------------------------------------------------------
     def async_get_options_flow(self, config_entry):
         return PocasimeteoOptionsFlow(config_entry)
 
 
+# ======================================================================
+# Options Flow
+# ======================================================================
+
 class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
     """Handle options for PočasíMeteo."""
 
-    def __init__(self, config_entry):
+    def __init__(self, config_entry: config_entries.ConfigEntry):
         self.config_entry = config_entry
 
+    # ------------------------------------------------------------------
+    # Step 1: Select sensors
+    # ------------------------------------------------------------------
     async def async_step_init(self, user_input=None):
-        sensors = self.config_entry.options.get("sensors", [])
-
+        sensors = self.config_entry.options.get("sensors", DEFAULT_SENSORS_OPTIONS.copy())
         existing_ids = [s["id"] for s in sensors]
 
         schema = vol.Schema(
             {
-                vol.Optional(
-                    "sensor_list",
-                    default=existing_ids or DEFAULT_PRIMARY + DEFAULT_SECONDARY,
-                ): vol.All([str]),
+                vol.Optional("sensor_list", default=existing_ids): vol.All([str]),
                 vol.Optional("add_custom_sensor", default=""): str,
             }
         )
@@ -204,22 +194,32 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
             if custom:
                 sensor_list.append(custom)
 
+            # Remove duplicates
             sensor_list = list(dict.fromkeys(sensor_list))
 
             self._sensor_ids = sensor_list
-
             return await self.async_step_types()
 
         return self.async_show_form(step_id="init", data_schema=schema)
 
+    # ------------------------------------------------------------------
+    # Step 2: Assign types
+    # ------------------------------------------------------------------
     async def async_step_types(self, user_input=None):
         sensor_ids = getattr(self, "_sensor_ids", [])
 
         schema_dict = {}
         for sid in sensor_ids:
-            schema_dict[
-                vol.Required(f"type_{sid}", default="primary")
-            ] = vol.In(["primary", "secondary"])
+            # Default type based on definitions
+            default_type = (
+                "primary"
+                if sid in DEFAULT_ALL_SENSOR_IDS
+                and sid in [s["id"] for s in DEFAULT_SENSORS_OPTIONS if s["type"] == "primary"]
+                else "secondary"
+            )
+            schema_dict[vol.Required(f"type_{sid}", default=default_type)] = vol.In(
+                ["primary", "secondary"]
+            )
 
         schema = vol.Schema(schema_dict)
 
@@ -231,14 +231,17 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
 
         return self.async_show_form(step_id="types", data_schema=schema)
 
+    # ------------------------------------------------------------------
+    # Step 3: Assign order
+    # ------------------------------------------------------------------
     async def async_step_order(self, user_input=None):
         sensor_ids = getattr(self, "_sensor_ids", [])
 
         schema_dict = {}
         for sid in sensor_ids:
-            schema_dict[
-                vol.Required(f"order_{sid}", default=1)
-            ] = vol.All(int, vol.Range(min=1, max=99))
+            schema_dict[vol.Required(f"order_{sid}", default=1)] = vol.All(
+                int, vol.Range(min=1, max=999)
+            )
 
         schema = vol.Schema(schema_dict)
 
