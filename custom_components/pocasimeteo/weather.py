@@ -1,4 +1,21 @@
-"""Weather entity for PočasíMeteo with external forecast support."""
+"""Weather entity for PočasíMeteo integration.
+
+This module provides a lightweight Home Assistant weather entity
+based on normalized data from the coordinator.
+
+It exposes:
+- temperature
+- pressure
+- humidity
+- wind speed
+- wind bearing
+- precipitation intensity
+- solar radiation
+- UV index
+
+All structural definitions (sensor metadata, API mapping)
+are centralized in const.py.
+"""
 
 from __future__ import annotations
 
@@ -9,273 +26,155 @@ from homeassistant.components.weather import (
     WeatherEntity,
     WeatherEntityFeature,
 )
-from homeassistant.const import (
-    UnitOfTemperature,
-    PERCENTAGE,
-    UnitOfPressure,
-    UnitOfSpeed,
-    UnitOfPrecipitationDepth,
-)
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import (
-    DOMAIN,
-    DEFAULT_NAME,
-)
+from .const import DOMAIN, SENSOR_DEFINITIONS
+from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Setup entry: create weather entity
+# ---------------------------------------------------------------------------
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
-    async_add_entities,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up PočasíMeteo weather entity."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]
-
-    async_add_entities(
-        [
-            PocasimeteoWeatherEntity(
-                hass=hass,
-                coordinator=coordinator,
-                entry=entry,
-            )
-        ],
-        update_before_add=True,
-    )
+    coordinator: PocasimeteoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    async_add_entities([PocasimeteoWeather(coordinator)])
 
 
-class PocasimeteoWeatherEntity(CoordinatorEntity, WeatherEntity):
-    """Representation of PočasíMeteo current weather with external forecast."""
+# ---------------------------------------------------------------------------
+# Weather Entity
+# ---------------------------------------------------------------------------
+class PocasimeteoWeather(WeatherEntity):
+    """Representation of PočasíMeteo weather summary."""
 
-    _attr_has_entity_name = True
-    _attr_supported_features = (
-        WeatherEntityFeature.FORECAST_DAILY
-        | WeatherEntityFeature.FORECAST_HOURLY
-    )
+    _attr_should_poll = False
+    _attr_supported_features = WeatherEntityFeature.NONE
 
-    def __init__(self, hass: HomeAssistant, coordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator)
-        self.hass = hass
-        self._entry = entry
+    def __init__(self, coordinator: PocasimeteoDataUpdateCoordinator) -> None:
+        self.coordinator = coordinator
+        self._attr_name = "PočasíMeteo"
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_weather"
 
-        station_name = coordinator.data.get("station_name") or entry.title or DEFAULT_NAME
-        self._attr_name = station_name
-        self._attr_unique_id = f"{entry.entry_id}_weather"
-
-        # Forecast entity ID (optional)
-        self._forecast_entity_id = entry.options.get("forecast_entity_id")
-
-    # ----------------------------------------------------------------------
-    # DEVICE INFO
-    # ----------------------------------------------------------------------
-
+    # ------------------------------------------------------------------
+    # Availability
+    # ------------------------------------------------------------------
     @property
-    def device_info(self) -> DeviceInfo:
-        data = self.coordinator.data
-        station_name = data.get("station_name", self._entry.title)
-        meta = data.get("meta") or {}
+    def available(self) -> bool:
+        return self.coordinator.data is not None
 
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name=station_name,
-            manufacturer="PočasíMeteo",
-            model=meta.get("TypStanice") or "Meteostanice",
-            sw_version=meta.get("VerzeFw") or None,
-        )
-
-    # ----------------------------------------------------------------------
-    # CURRENT CONDITIONS (converted to km/h)
-    # ----------------------------------------------------------------------
-
+    # ------------------------------------------------------------------
+    # Temperature (°C)
+    # ------------------------------------------------------------------
     @property
-    def native_temperature(self) -> float | None:
-        return self.coordinator.data.get("TeplotaVnejsi")
+    def temperature(self) -> float | None:
+        return self._get_value("TeplotaVnejsi")
 
+    # ------------------------------------------------------------------
+    # Pressure (hPa)
+    # ------------------------------------------------------------------
     @property
-    def native_temperature_unit(self) -> str:
-        return UnitOfTemperature.CELSIUS
+    def pressure(self) -> float | None:
+        return self._get_value("TlakRel")
 
+    # ------------------------------------------------------------------
+    # Humidity (%)
+    # ------------------------------------------------------------------
     @property
     def humidity(self) -> float | None:
-        return self.coordinator.data.get("VlhkostVnejsi")
+        return self._get_value("VlhkostVnejsi")
 
+    # ------------------------------------------------------------------
+    # Wind speed (m/s)
+    # ------------------------------------------------------------------
     @property
-    def native_pressure(self) -> float | None:
-        return self.coordinator.data.get("TlakRel")
+    def wind_speed(self) -> float | None:
+        return self._get_value("VitrRychlost")
 
-    @property
-    def native_pressure_unit(self) -> str:
-        return UnitOfPressure.HPA
-
-    @property
-    def native_wind_speed(self) -> float | None:
-        """Return wind speed in km/h."""
-        v = self.coordinator.data.get("Vitr")
-        return v * 3.6 if v is not None else None
-
-    @property
-    def native_wind_speed_unit(self) -> str:
-        return UnitOfSpeed.KILOMETERS_PER_HOUR
-
-    @property
-    def native_wind_gust_speed(self) -> float | None:
-        """Return wind gust speed in km/h."""
-        v = self.coordinator.data.get("VitrNarazy")
-        return v * 3.6 if v is not None else None
-
-    @property
-    def native_wind_gust_unit(self) -> str:
-        return UnitOfSpeed.KILOMETERS_PER_HOUR
-
-    @property
-    def native_precipitation(self) -> float | None:
-        """Return daily precipitation (cumulative)."""
-        return self.coordinator.data.get("SrazkyDen")
-
-    @property
-    def native_precipitation_unit(self) -> str:
-        return UnitOfPrecipitationDepth.MILLIMETERS
-
+    # ------------------------------------------------------------------
+    # Wind bearing (°)
+    # ------------------------------------------------------------------
     @property
     def wind_bearing(self) -> float | None:
-        return self.coordinator.data.get("VitrSmer")
+        return self._get_value("VitrSmer")
 
-    # ----------------------------------------------------------------------
-    # CONDITION (calculated from attributes)
-    # ----------------------------------------------------------------------
-
+    # ------------------------------------------------------------------
+    # Precipitation intensity (mm/h)
+    # ------------------------------------------------------------------
     @property
-    def condition(self) -> str | None:
+    def precipitation(self) -> float | None:
+        return self._get_value("SrazkyIntenzita")
+
+    # ------------------------------------------------------------------
+    # Solar radiation (W/m²)
+    # ------------------------------------------------------------------
+    @property
+    def solar_radiation(self) -> float | None:
+        return self._get_value("SlunZareni")
+
+    # ------------------------------------------------------------------
+    # UV index
+    # ------------------------------------------------------------------
+    @property
+    def uv_index(self) -> float | None:
+        return self._get_value("UVIndex")
+
+    # ------------------------------------------------------------------
+    # Helper: read value from coordinator
+    # ------------------------------------------------------------------
+    def _get_value(self, sid: str) -> Any:
         data = self.coordinator.data
+        if not data:
+            return None
 
-        slun = data.get("SlunZareni") or 0
-        uv = data.get("UVindex") or 0
-        vitr = data.get("Vitr") or 0
+        payload = data.get(sid)
+        if not payload:
+            return None
 
-        # Night detection
-        is_night = slun < 5 and uv < 0.1
+        return payload.get("value")
 
-        # Rain detection (compare last two measurements)
-        measurements = data.get("measurements")
-        is_rain = False
-        if measurements and len(measurements) >= 2:
-            prev = measurements[-2].get("SrazkyDen") or 0
-            curr = measurements[-1].get("SrazkyDen") or 0
-            is_rain = curr > prev
-
-        # Wind detection
-        is_windy = vitr >= 8
-
-        # Base condition
-        if is_night:
-            base = "night"
-        elif is_rain:
-            base = "rainy"
-        elif slun > 400:
-            base = "sunny"
-        elif slun > 100:
-            base = "partlycloudy"
-        else:
-            base = "cloudy"
-
-        # Modifiers
-        mods = []
-        if is_windy:
-            mods.append("windy")
-        if is_rain and base != "rainy":
-            mods.append("rainy")
-        if is_night and base != "night":
-            mods.append("night")
-
-        if mods:
-            return base + " & " + " & ".join(mods)
-        return base
-
-    # ----------------------------------------------------------------------
-    # ATTRIBUTES (including min/max + sensor ordering)
-    # ----------------------------------------------------------------------
-
+    # ------------------------------------------------------------------
+    # Attributes (timestamp, min/max)
+    # ------------------------------------------------------------------
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        data = self.coordinator.data
+        """Expose combined attributes from key sensors."""
+        attrs: dict[str, Any] = {}
 
-        attrs = {
-            "station_name": data.get("station_name"),
-            "timestamp": data.get("timestamp"),
-            "webcam_url": data.get("webcam_url"),
-
-            # Current values (raw, not converted)
-            "TeplotaVnejsi": data.get("TeplotaVnejsi"),
-            "VlhkostVnejsi": data.get("VlhkostVnejsi"),
-            "Vitr": data.get("Vitr"),
-            "VitrNarazy": data.get("VitrNarazy"),
-            "SrazkyDen": data.get("SrazkyDen"),
-            "TlakRel": data.get("TlakRel"),
-            "TeplotaVnitrni": data.get("TeplotaVnitrni"),
-            "VlhkostVnitrni": data.get("VlhkostVnitrni"),
-            "SlunZareni": data.get("SlunZareni"),
-            "UVindex": data.get("UVindex"),
-            "VitrSmer": data.get("VitrSmer"),
-
-            # Wind direction + statistics
-            "VitrSmer_mode": data.get("VitrSmer_mode"),
-            "VitrSmer_avg": data.get("VitrSmer_avg"),
-            "VitrSmer_var": data.get("VitrSmer_var"),
-
-            # Rain intensity
-            "SrazkyIntenzita": data.get("SrazkyIntenzita"),
-            "SrazkyIntenzita_min": data.get("SrazkyIntenzita_min"),
-            "SrazkyIntenzita_max": data.get("SrazkyIntenzita_max"),
-
-            # Sensor ordering for frontend card
-            "primary_sensors": data.get("primary_sensors"),
-            "secondary_sensors": data.get("secondary_sensors"),
-        }
-
-        # Add min/max for all numeric keys except SrazkyDen
-        for key in [
+        for sid in [
             "TeplotaVnejsi",
             "VlhkostVnejsi",
-            "Vitr",
-            "VitrNarazy",
             "TlakRel",
-            "TeplotaVnitrni",
-            "VlhkostVnitrni",
-            "SlunZareni",
-            "UVindex",
+            "VitrRychlost",
+            "VitrSmer",
             "SrazkyIntenzita",
+            "SlunZareni",
+            "UVIndex",
         ]:
-            attrs[f"{key}_min"] = data.get(f"{key}_min")
-            attrs[f"{key}_max"] = data.get(f"{key}_max")
+            data = self.coordinator.data
+            if not data or sid not in data:
+                continue
+
+            payload = data[sid]
+            attrs[f"{sid}_value"] = payload.get("value")
+
+            for key, val in payload.get("attributes", {}).items():
+                attrs[f"{sid}_{key}"] = val
 
         return attrs
 
-    # ----------------------------------------------------------------------
-    # FORECAST (from external weather entity)
-    # ----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Coordinator listener
+    # ------------------------------------------------------------------
+    async def async_added_to_hass(self) -> None:
+        self.coordinator.async_add_listener(self.async_write_ha_state)
 
-    def _get_forecast_entity(self):
-        if not self._forecast_entity_id:
-            return None
-        return self.hass.states.get(self._forecast_entity_id)
-
-    async def async_forecast_daily(self):
-        entity = self._get_forecast_entity()
-        if not entity:
-            return None
-
-        forecast = entity.attributes.get("forecast_daily") or entity.attributes.get("forecast")
-        return forecast
-
-    async def async_forecast_hourly(self):
-        entity = self._get_forecast_entity()
-        if not entity:
-            return None
-
-        forecast = entity.attributes.get("forecast_hourly")
-        return forecast
+    async def async_will_remove_from_hass(self) -> None:
+        self.coordinator.async_remove_listener(self.async_write_ha_state)
