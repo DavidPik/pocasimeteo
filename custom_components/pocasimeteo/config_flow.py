@@ -69,11 +69,13 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
                 return self.async_create_entry(
                     title=station_name,
+                    # DATA: základní konfigurace integrace
                     data={
                         CONF_STATION: station_name,
                         CONF_API_KEY: api_key,
                         CONF_UPDATE_INTERVAL: interval,
                     },
+                    # OPTIONS: volitelné nastavení (interval, forecast entity, senzory)
                     options={
                         "update_interval": interval,
                         "forecast_entity_id": forecast_entity or "",
@@ -172,12 +174,18 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry):
         self.config_entry = config_entry
+        self._sensor_ids: list[str] = []
+        self._sensor_types: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Step 1: Select sensors
     # ------------------------------------------------------------------
     async def async_step_init(self, user_input=None):
-        sensors = self.config_entry.options.get("sensors", DEFAULT_SENSORS_OPTIONS.copy())
+        # ČTENÍ OPTIONS: senzory jsou vždy v config_entry.options["sensors"]
+        sensors = self.config_entry.options.get(
+            "sensors",
+            DEFAULT_SENSORS_OPTIONS.copy(),
+        )
         existing_ids = [s["id"] for s in sensors]
 
         schema = vol.Schema(
@@ -214,7 +222,12 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
             default_type = (
                 "primary"
                 if sid in DEFAULT_ALL_SENSOR_IDS
-                and sid in [s["id"] for s in DEFAULT_SENSORS_OPTIONS if s["type"] == "primary"]
+                and sid
+                in [
+                    s["id"]
+                    for s in DEFAULT_SENSORS_OPTIONS
+                    if s["type"] == "primary"
+                ]
                 else "secondary"
             )
             schema_dict[vol.Required(f"type_{sid}", default=default_type)] = vol.In(
@@ -256,9 +269,14 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
                     }
                 )
 
+            # Sloučení existujících options s novými senzory
+            new_options = dict(self.config_entry.options)
+            new_options["sensors"] = sensors_final
+
+            # V OptionsFlow je `data` = nové options
             return self.async_create_entry(
                 title="Senzory",
-                data={"sensors": sensors_final},
+                data=new_options,
             )
 
         return self.async_show_form(step_id="order", data_schema=schema)
