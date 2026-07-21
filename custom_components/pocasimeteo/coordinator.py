@@ -41,7 +41,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self.hass = hass
         self.entry = entry
 
-        update_interval_minutes = entry.data.get(CONF_UPDATE_INTERVAL, 5)
+        update_interval_minutes = entry.options.get(CONF_UPDATE_INTERVAL, entry.data.get(CONF_UPDATE_INTERVAL, 5))
 
         super().__init__(
             hass,
