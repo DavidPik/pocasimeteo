@@ -13,7 +13,7 @@ are stored in const.py.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
@@ -35,10 +35,23 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up PočasíMeteo sensor entities."""
-    coordinator: PocasimeteoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    store = hass.data[DOMAIN][entry.entry_id]
+
+    # Robustně zjistíme koordinátor – buď je uložen přímo,
+    # nebo v dictu pod klíčem "coordinator"
+    if isinstance(store, PocasimeteoDataUpdateCoordinator):
+        coordinator: PocasimeteoDataUpdateCoordinator = store
+    else:
+        coordinator = store["coordinator"]
 
     sensors_opt = entry.options.get("sensors", [])
     entities: list[PocasimeteoSensor] = []
+
+    _LOGGER.debug(
+        "pocasimeteo.sensor: async_setup_entry, entry_id=%s, sensors_opt=%s",
+        entry.entry_id,
+        sensors_opt,
+    )
 
     for sensor_def in sensors_opt:
         sid = sensor_def["id"]
@@ -49,6 +62,12 @@ async def async_setup_entry(
 
         if meta is None:
             # Custom sensor (not defined in const.py)
+            _LOGGER.debug(
+                "pocasimeteo.sensor: creating custom sensor id=%s type=%s order=%s",
+                sid,
+                s_type,
+                order,
+            )
             entities.append(
                 PocasimeteoSensor(
                     coordinator=coordinator,
@@ -63,6 +82,13 @@ async def async_setup_entry(
             continue
 
         # Standard sensor
+        _LOGGER.debug(
+            "pocasimeteo.sensor: creating standard sensor id=%s name=%s type=%s order=%s",
+            sid,
+            meta["name"],
+            s_type,
+            order,
+        )
         entities.append(
             PocasimeteoSensor(
                 coordinator=coordinator,
@@ -75,6 +101,10 @@ async def async_setup_entry(
             )
         )
 
+    _LOGGER.debug(
+        "pocasimeteo.sensor: async_setup_entry prepared %d entities",
+        len(entities),
+    )
     async_add_entities(entities)
 
 
@@ -105,6 +135,13 @@ class PocasimeteoSensor(SensorEntity):
         self._order = order
 
         self._attr_unique_id = f"{coordinator.entry.entry_id}_{sensor_id}"
+        self._unsub_coordinator: Callable[[], None] | None = None
+
+        _LOGGER.debug(
+            "pocasimeteo.sensor: created entity unique_id=%s name=%s",
+            self._attr_unique_id,
+            name,
+        )
 
     # ------------------------------------------------------------------
     # Coordinator update hook
@@ -113,7 +150,8 @@ class PocasimeteoSensor(SensorEntity):
     def available(self) -> bool:
         """Entity is available if coordinator has data for this sensor."""
         data = self.coordinator.data
-        return data is not None and self._sensor_id in data
+        available = data is not None and self._sensor_id in data
+        return available
 
     @property
     def native_value(self) -> Any:
@@ -143,8 +181,22 @@ class PocasimeteoSensor(SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Register coordinator listener."""
-        self.coordinator.async_add_listener(self.async_write_ha_state)
+        _LOGGER.debug(
+            "pocasimeteo.sensor: async_added_to_hass for %s",
+            self._attr_unique_id,
+        )
+        # DataUpdateCoordinator.async_add_listener vrací funkci pro odhlášení
+        self._unsub_coordinator = self.coordinator.async_add_listener(
+            self.async_write_ha_state
+        )
 
     async def async_will_remove_from_hass(self) -> None:
         """Remove coordinator listener."""
-        self.coordinator.remove_listener(self.async_write_ha_state)
+        _LOGGER.debug(
+            "pocasimeteo.sensor: async_will_remove_from_hass for %s",
+            self._attr_unique_id,
+        )
+        if self._unsub_coordinator is not None:
+            self._unsub_coordinator()
+            self._unsub_coordinator = None
+            
