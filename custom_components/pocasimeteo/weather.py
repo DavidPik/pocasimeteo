@@ -20,17 +20,16 @@ are centralized in const.py.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from homeassistant.components.weather import (
     WeatherEntity,
-    WeatherEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, SENSOR_DEFINITIONS
+from .const import DOMAIN
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -45,7 +44,18 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up PočasíMeteo weather entity."""
-    coordinator: PocasimeteoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    store = hass.data[DOMAIN][entry.entry_id]
+
+    if isinstance(store, PocasimeteoDataUpdateCoordinator):
+        coordinator: PocasimeteoDataUpdateCoordinator = store
+    else:
+        coordinator = store["coordinator"]
+
+    _LOGGER.debug(
+        "pocasimeteo.weather: async_setup_entry, entry_id=%s",
+        entry.entry_id,
+    )
+
     async_add_entities([PocasimeteoWeather(coordinator)])
 
 
@@ -62,6 +72,12 @@ class PocasimeteoWeather(WeatherEntity):
         self.coordinator = coordinator
         self._attr_name = "PočasíMeteo"
         self._attr_unique_id = f"{coordinator.entry.entry_id}_weather"
+        self._unsub_coordinator: Callable[[], None] | None = None
+
+        _LOGGER.debug(
+            "pocasimeteo.weather: created entity unique_id=%s",
+            self._attr_unique_id,
+        )
 
     # ------------------------------------------------------------------
     # Availability
@@ -174,8 +190,20 @@ class PocasimeteoWeather(WeatherEntity):
     # Coordinator listener
     # ------------------------------------------------------------------
     async def async_added_to_hass(self) -> None:
-        self.coordinator.async_add_listener(self.async_write_ha_state)
+        _LOGGER.debug(
+            "pocasimeteo.weather: async_added_to_hass for %s",
+            self._attr_unique_id,
+        )
+        self._unsub_coordinator = self.coordinator.async_add_listener(
+            self.async_write_ha_state
+        )
 
     async def async_will_remove_from_hass(self) -> None:
-        self.coordinator.remove_listener(self.async_write_ha_state)
-        
+        _LOGGER.debug(
+            "pocasimeteo.weather: async_will_remove_from_hass for %s",
+            self._attr_unique_id,
+        )
+        if self._unsub_coordinator is not None:
+            self._unsub_coordinator()
+            self._unsub_coordinator = None
+            
