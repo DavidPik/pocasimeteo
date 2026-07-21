@@ -104,10 +104,13 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
                     }
                 )
 
-            # Single canonical options structure: sensors list
+            # Merge existing options with updated sensors
+            new_options = dict(self.config_entry.options)
+            new_options["sensors"] = sensors_final
+
             return self.async_create_entry(
                 title="Senzory",
-                data={"sensors": sensors_final},
+                data=new_options,
             )
 
         return self.async_show_form(step_id="order", data_schema=schema)
