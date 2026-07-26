@@ -1,19 +1,9 @@
-"""Data update coordinator for PočasíMeteo integration.
-
-This module contains ONLY logic for:
-- fetching data from PočasíMeteo API,
-- mapping API fields to internal sensor IDs (defined in const.py),
-- preparing a clean data structure for sensor/weather entities,
-- computing lightweight daily statistics (min/max) as attributes.
-
-All structural definitions (sensor metadata, API mapping, units, icons)
-are centralized in const.py.
-"""
+"""Data update coordinator for PočasíMeteo integration."""
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 import async_timeout
 from homeassistant.core import HomeAssistant
@@ -47,20 +37,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=f"{DOMAIN}_{entry.entry_id}",
-            update_interval=None,  # dynamic interval below
+            update_interval=timedelta(minutes=update_interval_minutes),
         )
-
-        # Convert minutes to timedelta
-        from datetime import timedelta
-
-        self.update_interval = timedelta(minutes=update_interval_minutes)
 
         # Daily statistics storage (in-memory, reset at midnight)
         self._daily_stats: dict[str, dict[str, float]] = {}
 
-    # ----------------------------------------------------------------------
-    # Fetch data from API
-    # ----------------------------------------------------------------------
     async def _async_update_data(self):
         """Fetch and normalize data from PočasíMeteo API."""
         api_key = self.entry.data[CONF_API_KEY]
@@ -90,54 +72,39 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         return normalized
 
-    # ----------------------------------------------------------------------
-    # Normalize API payload into internal sensor structure
-    # ----------------------------------------------------------------------
-    def _normalize_data(self, raw: dict) -> dict[str, dict[str, float]]:
-        """Convert API fields into internal sensor IDs defined in const.py.
-
-        Output format:
-            {
-                "TeplotaVnejsi": {
-                    "value": 23.4,
-                    "attributes": {
-                        "min": 12.1,
-                        "max": 27.8,
-                        "timestamp": "2026-07-19T19:58:00+02:00"
-                    }
-                },
-                ...
-            }
-        """
+    def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
+        """Convert API fields into internal structure dynamically based on API response."""
         result: dict[str, dict] = {}
         timestamp = datetime.now().isoformat()
 
-        for sid, meta in SENSOR_DEFINITIONS.items():
-            api_key = meta["api_key"]
-            value = raw.get(api_key)
-
+        # Procházíme dynamicky VŠECHNA data, která přišla z API serveru
+        for api_key, value in raw.items():
             if value is None:
                 continue
 
-            result[sid] = {
+            # Najdeme, zda pro tento API klíč máme definované interní ID v const.py
+            internal_sid = None
+            for sid, meta in SENSOR_DEFINITIONS.items():
+                if meta.get("api_key") == api_key:
+                    internal_sid = sid
+                    break
+
+            # Pokud klíč v const.py nemáme, vytvoříme dynamické ID podle názvu z API
+            if internal_sid is None:
+                internal_sid = api_key
+
+            result[internal_sid] = {
                 "value": value,
+                "api_key": api_key,  # Uložíme pro případnou zpětnou vazbu v senzorech
                 "attributes": {
                     "timestamp": timestamp,
-                    # min/max added later by _update_daily_stats()
                 },
             }
 
         return result
 
-    # ----------------------------------------------------------------------
-    # Daily min/max statistics (in-memory)
-    # ----------------------------------------------------------------------
     def _update_daily_stats(self, data: dict[str, dict]):
-        """Compute daily min/max values for each sensor.
-
-        These statistics are stored only in memory and reset at midnight.
-        They are exposed as attributes of each sensor entity.
-        """
+        """Compute daily min/max values for each numeric sensor."""
         today = date.today()
 
         # Reset stats at midnight
@@ -147,6 +114,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         for sid, payload in data.items():
             value = payload["value"]
 
+            # Statistiky počítáme pouze pro číselné hodnoty (int, float)
+            if not isinstance(value, (int, float)):
+                continue
+
             stats = self._daily_stats.setdefault(sid, {"min": value, "max": value})
 
             if value < stats["min"]:
@@ -154,7 +125,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if value > stats["max"]:
                 stats["max"] = value
 
-            # Attach stats to entity attributes
+            # Přidáme statistiky do atributů entity
             payload["attributes"]["min"] = stats["min"]
             payload["attributes"]["max"] = stats["max"]
-            
