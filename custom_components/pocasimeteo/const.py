@@ -49,7 +49,7 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "icon": "mdi:weather-rainy",
         "type": "primary",
         "order": 4,
-        "api_key": "RainIntensity",
+        "api_key": "SrazkyIntenzita",  # Interní klíč, který vygeneruje koordinátor
     },
     "vitr": {
         "name": "Vítr",
