@@ -103,32 +103,33 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose combined attributes and structural metadata for frontend card."""
+        """Expose combined attributes, structural metadata, location and webcam URL."""
         attrs: dict[str, Any] = {}
         sensors_metadata: list[dict[str, Any]] = []
+
+        # Přidání informací o lokalitě a webkameře z koordinátoru
+        metadata = getattr(self.coordinator, "station_metadata", {})
+        attrs["lokalita_stanice"] = metadata.get("lokalita") or self.coordinator.entry.data.get(CONF_STATION, "Hostivice")
+        attrs["url_webkamera"] = metadata.get("webcamera_url") or ""
 
         if not self.coordinator.data:
             return attrs
 
         # Procházíme všechny aktivní senzory z koordinátoru
         for sid, payload in self.coordinator.data.items():
-            # Hodnoty pro starší verzi karty
             attrs[f"{sid}_value"] = payload.get("value")
 
             for key, val in payload.get("attributes", {}).items():
                 attrs[f"{sid}_{key}"] = val
 
-            # Struktura pro dynamické řazení grafů ve frontendu
             sensors_metadata.append({
                 "id": sid,
                 "type": payload.get("type", "secondary"),
                 "order": payload.get("order", 200)
             })
 
-        # Seřadíme senzory podle pořadí (order) z const.py
         sensors_metadata.sort(key=lambda x: x["order"])
-        
-        # Předáme kartě kompletní seřazenou strukturu
         attrs["sensors"] = sensors_metadata
 
         return attrs
+
