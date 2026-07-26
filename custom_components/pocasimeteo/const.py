@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Basic integration identification
@@ -31,26 +32,10 @@ DEFAULT_UPDATE_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL_MINUTES)
 
 # ---------------------------------------------------------------------------
 # Sensor model
-#
-# All structural definitions for sensors live here. Other modules only
-# consume this metadata and never hard‑code IDs, names, units or types.
-#
-# Fields:
-#   id        – internal sensor ID used in options and entity_id suffix
-#   name      – human‑readable name (Czech, for UI)
-#   unit      – unit of measurement
-#   icon      – Material Design Icon name
-#   type      – "primary" or "secondary" (for card layout)
-#   order     – default ordering index within its group
-#   api_key   – key name in PočasíMeteo API JSON payload
 # ---------------------------------------------------------------------------
 
-SENSOR_DEFINITIONS: dict[str, dict[str, object]] = {
-    # -----------------------------------------------------------------------
-    # Primary sensors (main outdoor metrics)
-    # -----------------------------------------------------------------------
+SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
     "TeplotaVnejsi": {
-        "id": "TeplotaVnejsi",
         "name": "Teplota venkovní",
         "unit": "°C",
         "icon": "mdi:thermometer",
@@ -59,7 +44,6 @@ SENSOR_DEFINITIONS: dict[str, dict[str, object]] = {
         "api_key": "TeplotaVnejsi",
     },
     "VlhkostVnejsi": {
-        "id": "VlhkostVnejsi",
         "name": "Vlhkost venkovní",
         "unit": "%",
         "icon": "mdi:water-percent",
@@ -68,7 +52,6 @@ SENSOR_DEFINITIONS: dict[str, dict[str, object]] = {
         "api_key": "VlhkostVnejsi",
     },
     "TlakRel": {
-        "id": "TlakRel",
         "name": "Tlak relativní",
         "unit": "hPa",
         "icon": "mdi:gauge",
@@ -77,17 +60,14 @@ SENSOR_DEFINITIONS: dict[str, dict[str, object]] = {
         "api_key": "TlakRel",
     },
     "SrazkyIntenzita": {
-        "id": "SrazkyIntenzita",
         "name": "Srážky intenzita",
         "unit": "mm/h",
         "icon": "mdi:weather-rainy",
         "type": "primary",
         "order": 4,
-        # API still uses RainIntensity – we map it here centrally
         "api_key": "RainIntensity",
     },
     "VitrRychlost": {
-        "id": "VitrRychlost",
         "name": "Vítr rychlost",
         "unit": "m/s",
         "icon": "mdi:weather-windy",
@@ -96,7 +76,6 @@ SENSOR_DEFINITIONS: dict[str, dict[str, object]] = {
         "api_key": "Vitr",
     },
     "VitrNarazy": {
-        "id": "VitrNarazy",
         "name": "Vítr nárazy",
         "unit": "m/s",
         "icon": "mdi:weather-windy",
@@ -105,7 +84,6 @@ SENSOR_DEFINITIONS: dict[str, dict[str, object]] = {
         "api_key": "VitrNarazy",
     },
     "VitrSmer": {
-        "id": "VitrSmer",
         "name": "Vítr směr",
         "unit": "°",
         "icon": "mdi:compass",
@@ -114,7 +92,6 @@ SENSOR_DEFINITIONS: dict[str, dict[str, object]] = {
         "api_key": "VitrSmer",
     },
     "SlunZareni": {
-        "id": "SlunZareni",
         "name": "Sluneční záření",
         "unit": "W/m²",
         "icon": "mdi:white-balance-sunny",
@@ -123,7 +100,6 @@ SENSOR_DEFINITIONS: dict[str, dict[str, object]] = {
         "api_key": "SlunZareni",
     },
     "UVIndex": {
-        "id": "UVIndex",
         "name": "UV index",
         "unit": "",
         "icon": "mdi:sun-wireless",
@@ -131,12 +107,7 @@ SENSOR_DEFINITIONS: dict[str, dict[str, object]] = {
         "order": 9,
         "api_key": "UVindex",
     },
-
-    # -----------------------------------------------------------------------
-    # Secondary sensors (indoor metrics)
-    # -----------------------------------------------------------------------
     "TeplotaVnitrni": {
-        "id": "TeplotaVnitrni",
         "name": "Teplota vnitřní",
         "unit": "°C",
         "icon": "mdi:thermometer",
@@ -145,7 +116,6 @@ SENSOR_DEFINITIONS: dict[str, dict[str, object]] = {
         "api_key": "TeplotaVnitrni",
     },
     "VlhkostVnitrni": {
-        "id": "VlhkostVnitrni",
         "name": "Vlhkost vnitřní",
         "unit": "%",
         "icon": "mdi:water-percent",
@@ -156,7 +126,52 @@ SENSOR_DEFINITIONS: dict[str, dict[str, object]] = {
 }
 
 # ---------------------------------------------------------------------------
-# Derived defaults used by config_flow / options_flow
+# Dynamic Sensors Helper
+# ---------------------------------------------------------------------------
+
+def get_dynamic_sensor_meta(key: str) -> dict[str, Any]:
+    """Sestaví metadata pro senzor, který není pevně definován v SENSOR_DEFINITIONS."""
+    key_lower = key.lower()
+    
+    # Výchozí hodnoty
+    name = key
+    unit = ""
+    icon = "mdi:eye"
+    sensor_type = "secondary"
+    order = 200
+
+    if key_lower.startswith("te") or "temp" in key_lower:
+        name = f"Teplota {key.replace('Te', '')}"
+        unit = "°C"
+        icon = "mdi:thermometer"
+    elif key_lower.startswith("vl") or "hum" in key_lower:
+        name = f"Vlhkost {key.replace('Vl', '')}"
+        unit = "%"
+        icon = "mdi:water-percent"
+    elif "co2" in key_lower:
+        name = "CO₂"
+        unit = "ppm"
+        icon = "mdi:molecule-co2"
+    elif "pm" in key_lower:
+        name = f"Polétavý prach {key.upper()}"
+        unit = "µg/m³"
+        icon = "mdi:air-filter"
+    elif "press" in key_lower or "tlak" in key_lower:
+        name = "Tlak vzduchu"
+        unit = "hPa"
+        icon = "mdi:gauge"
+
+    return {
+        "name": name,
+        "unit": unit,
+        "icon": icon,
+        "type": sensor_type,
+        "order": order,
+        "api_key": key,
+    }
+
+# ---------------------------------------------------------------------------
+# Derived lists for internal HA logic
 # ---------------------------------------------------------------------------
 
 DEFAULT_PRIMARY_SENSOR_IDS: list[str] = [
@@ -168,13 +183,3 @@ DEFAULT_SECONDARY_SENSOR_IDS: list[str] = [
 ]
 
 DEFAULT_ALL_SENSOR_IDS: list[str] = DEFAULT_PRIMARY_SENSOR_IDS + DEFAULT_SECONDARY_SENSOR_IDS
-
-# Default full sensors structure for initial options (used by config_flow)
-DEFAULT_SENSORS_OPTIONS: list[dict[str, object]] = [
-    {
-        "id": sid,
-        "type": SENSOR_DEFINITIONS[sid]["type"],
-        "order": SENSOR_DEFINITIONS[sid]["order"],
-    }
-    for sid in DEFAULT_ALL_SENSOR_IDS
-]
