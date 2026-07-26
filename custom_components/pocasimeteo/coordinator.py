@@ -60,6 +60,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"API request failed: {err}") from err
 
+        # Inicializace čistého úložiště pro metadata (přesunuto na začátek)
         self.station_metadata = {}
 
         if isinstance(raw, list) and len(raw) > 0:
@@ -81,6 +82,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if not isinstance(raw, dict):
             raise UpdateFailed("Invalid API response format")
 
+        # Nyní bezpečně zapíšeme srážky, mezipaměť už se nepřepíše
         try:
             self.station_metadata["srazky_den"] = float(raw.get("SrazkyDen", 0))
         except (ValueError, TypeError):
