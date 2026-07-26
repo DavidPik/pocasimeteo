@@ -45,6 +45,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self):
         """Fetch and normalize data from PočasíMeteo API."""
         api_key = self.entry.data[CONF_API_KEY]
+        from .const import API_URL_BASE
         url = f"{API_URL_BASE}?KlicApi={api_key}"
 
         try:
@@ -57,9 +58,18 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"API request failed: {err}") from err
 
-        # OPRAVA 1: Parsování specifické struktury pole z pocasimeteo.cz
-        # Index [0] obsahuje metadata lokality, index [1] obsahuje nejnovější naměřená data.
+        # Inicializace úložiště pro metadata stanice
+        self.station_metadata = {}
+
         if isinstance(raw, list):
+            # Pokud nultý prvek obsahuje metadata o lokalitě, uložíme je do koordinátoru
+            if len(raw) > 0 and "LokalitaStanice" in raw[0]:
+                meta_payload = raw[0]
+                self.station_metadata["lokalita"] = meta_payload.get("LokalitaStanice")
+                if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
+                    self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
+
+            # Extrakce samotných dat měření z indexu 1
             if len(raw) > 1 and "Datum" in raw[1]:
                 raw = raw[1]
             elif len(raw) > 0 and "Datum" in raw[0]:
@@ -70,10 +80,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if not isinstance(raw, dict):
             raise UpdateFailed("Invalid API response format")
 
-        # Normalize data into internal structure
         normalized = self._normalize_data(raw)
-
-        # Update daily statistics (min/max)
         self._update_daily_stats(normalized)
 
         return normalized
