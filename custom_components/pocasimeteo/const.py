@@ -5,37 +5,21 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# Basic integration identification
-# ---------------------------------------------------------------------------
-
 DOMAIN = "pocasimeteo"
 DEFAULT_NAME = "PočasíMeteo"
 
-# ---------------------------------------------------------------------------
-# Configuration keys
-# ---------------------------------------------------------------------------
+CONF_STATION = "station_name"          
+CONF_API_KEY = "api_key"               
+CONF_UPDATE_INTERVAL = "update_interval"  
 
-CONF_STATION = "station_name"          # Weather station name
-CONF_API_KEY = "api_key"               # PočasíMeteo API key
-CONF_UPDATE_INTERVAL = "update_interval"  # Data update interval (minutes)
+API_URL_TEMPLATE = "https://pocasimeteo.cz{api_key}"
 
-# ---------------------------------------------------------------------------
-# API endpoint
-# ---------------------------------------------------------------------------
-
-API_URL_TEMPLATE = "https://ext.pocasimeteo.cz/ms/api/weather?KlicApi={api_key}"
-
-# Default polling interval (used as fallback, UI still controls actual value)
 DEFAULT_UPDATE_INTERVAL_MINUTES = 5
 DEFAULT_UPDATE_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL_MINUTES)
 
-# ---------------------------------------------------------------------------
-# Sensor model
-# ---------------------------------------------------------------------------
-
+# Klíče (ID senzorů) jsou nyní malými písmeny, přesně podle vaší JS karty
 SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "TeplotaVnejsi": {
+    "teplotavnejsi": {
         "name": "Teplota venkovní",
         "unit": "°C",
         "icon": "mdi:thermometer",
@@ -43,7 +27,7 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "order": 1,
         "api_key": "TeplotaVnejsi",
     },
-    "VlhkostVnejsi": {
+    "vlhkostvnejsi": {
         "name": "Vlhkost venkovní",
         "unit": "%",
         "icon": "mdi:water-percent",
@@ -51,7 +35,7 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "order": 2,
         "api_key": "VlhkostVnejsi",
     },
-    "TlakRel": {
+    "tlakrel": {
         "name": "Tlak relativní",
         "unit": "hPa",
         "icon": "mdi:gauge",
@@ -59,39 +43,39 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "order": 3,
         "api_key": "TlakRel",
     },
-    "SrazkyIntenzita": {
-        "name": "Srážky intenzita",
+    "rainintensity": {
+        "name": "Intenzita srážek",
         "unit": "mm/h",
         "icon": "mdi:weather-rainy",
         "type": "primary",
         "order": 4,
         "api_key": "RainIntensity",
     },
-    "VitrRychlost": {
-        "name": "Vítr rychlost",
+    "vitr": {
+        "name": "Vítr",
         "unit": "m/s",
         "icon": "mdi:weather-windy",
         "type": "primary",
         "order": 5,
         "api_key": "Vitr",
     },
-    "VitrNarazy": {
-        "name": "Vítr nárazy",
+    "vitrnarazy": {
+        "name": "Nárazy větru",
         "unit": "m/s",
         "icon": "mdi:weather-windy",
         "type": "primary",
         "order": 6,
         "api_key": "VitrNarazy",
     },
-    "VitrSmer": {
-        "name": "Vítr směr",
+    "vitrsmer": {
+        "name": "Směr větru",
         "unit": "°",
         "icon": "mdi:compass",
         "type": "primary",
         "order": 7,
         "api_key": "VitrSmer",
     },
-    "SlunZareni": {
+    "slunzareni": {
         "name": "Sluneční záření",
         "unit": "W/m²",
         "icon": "mdi:white-balance-sunny",
@@ -99,7 +83,7 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "order": 8,
         "api_key": "SlunZareni",
     },
-    "UVIndex": {
+    "uvindex": {
         "name": "UV index",
         "unit": "",
         "icon": "mdi:sun-wireless",
@@ -107,7 +91,7 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "order": 9,
         "api_key": "UVindex",
     },
-    "TeplotaVnitrni": {
+    "teplotavnitrni": {
         "name": "Teplota vnitřní",
         "unit": "°C",
         "icon": "mdi:thermometer",
@@ -115,7 +99,7 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "order": 100,
         "api_key": "TeplotaVnitrni",
     },
-    "VlhkostVnitrni": {
+    "vlhkostvnitrni": {
         "name": "Vlhkost vnitřní",
         "unit": "%",
         "icon": "mdi:water-percent",
@@ -125,15 +109,10 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
 }
 
-# ---------------------------------------------------------------------------
-# Dynamic Sensors Helper
-# ---------------------------------------------------------------------------
-
 def get_dynamic_sensor_meta(key: str) -> dict[str, Any]:
-    """Sestaví metadata pro senzor, který není pevně definován v SENSOR_DEFINITIONS."""
+    """Sestaví metadata pro dynamické senzory (např. co2, pm1, pm2 apod.)."""
     key_lower = key.lower()
     
-    # Výchozí hodnoty
     name = key
     unit = ""
     icon = "mdi:eye"
@@ -152,14 +131,12 @@ def get_dynamic_sensor_meta(key: str) -> dict[str, Any]:
         name = "CO₂"
         unit = "ppm"
         icon = "mdi:molecule-co2"
+        order = 110
     elif "pm" in key_lower:
         name = f"Polétavý prach {key.upper()}"
         unit = "µg/m³"
         icon = "mdi:air-filter"
-    elif "press" in key_lower or "tlak" in key_lower:
-        name = "Tlak vzduchu"
-        unit = "hPa"
-        icon = "mdi:gauge"
+        order = 120
 
     return {
         "name": name,
@@ -169,17 +146,3 @@ def get_dynamic_sensor_meta(key: str) -> dict[str, Any]:
         "order": order,
         "api_key": key,
     }
-
-# ---------------------------------------------------------------------------
-# Derived lists for internal HA logic
-# ---------------------------------------------------------------------------
-
-DEFAULT_PRIMARY_SENSOR_IDS: list[str] = [
-    sid for sid, meta in SENSOR_DEFINITIONS.items() if meta["type"] == "primary"
-]
-
-DEFAULT_SECONDARY_SENSOR_IDS: list[str] = [
-    sid for sid, meta in SENSOR_DEFINITIONS.items() if meta["type"] == "secondary"
-]
-
-DEFAULT_ALL_SENSOR_IDS: list[str] = DEFAULT_PRIMARY_SENSOR_IDS + DEFAULT_SECONDARY_SENSOR_IDS
