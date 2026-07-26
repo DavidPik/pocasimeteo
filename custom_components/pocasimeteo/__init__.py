@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -12,7 +11,8 @@ from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
 from .coordinator import PocasimeteoDataUpdateCoordinator
-from .options_flow import PocasimeteoOptionsFlow
+# Opravený import – třída se nyní nachází v config_flow
+from .config_flow import PocasimeteoOptionsFlow
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,7 +38,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = PocasimeteoDataUpdateCoordinator(hass, entry)
 
     # První stažení dat musí proběhnout úspěšně před registrací platforem.
-    # Pokud selže, vyhodí se ConfigEntryNotReady a HA integraci bezpečně pozdrží.
     try:
         await coordinator.async_config_entry_first_refresh()
         _LOGGER.debug("pocasimeteo: first refresh OK for entry_id=%s", entry.entry_id)
@@ -51,7 +50,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady(f"Cannot connect to PočasíMeteo API: {err}") from err
 
     hass.data.setdefault(DOMAIN, {})
-    # Uložíme strukturu jako dict – je to robustnější pro budoucí rozšíření
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
         "entry": entry,
@@ -108,7 +106,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.entry_id,
         entry.version,
     )
-    # Zatím není potřeba měnit strukturu data/options – jen logujeme
     return True
 
 
@@ -129,4 +126,3 @@ async def async_get_options_flow(config_entry: ConfigEntry) -> PocasimeteoOption
         config_entry.entry_id,
     )
     return PocasimeteoOptionsFlow(config_entry)
-    
