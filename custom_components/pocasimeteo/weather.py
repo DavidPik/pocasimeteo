@@ -53,6 +53,8 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
     def __init__(self, coordinator: PocasimeteoDataUpdateCoordinator, station_name: str) -> None:
         """Initialize the weather entity."""
         super().__init__(coordinator)
+        self._station_name = station_name
+
         self._attr_name = station_name
         self._attr_unique_id = f"{coordinator.entry.entry_id}_weather"
 
