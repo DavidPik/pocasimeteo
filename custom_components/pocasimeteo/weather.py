@@ -38,24 +38,16 @@ async def async_setup_entry(
 
     station_name = entry.data.get(CONF_STATION, "Meteostanice")
 
-    _LOGGER.debug(
-        "pocasimeteo.weather: Registering weather entity for entry_id=%s",
-        entry.entry_id,
-    )
-
     async_add_entities([PocasimeteoWeather(coordinator, station_name)])
 
 
 class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], WeatherEntity):
     """Representation of PočasíMeteo weather summary using CoordinatorEntity."""
 
-    # Definice nativních jednotek, které integrace posílá z coordinatoru
     _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_native_pressure_unit = UnitOfPressure.HPA
     _attr_native_wind_speed_unit = UnitOfSpeed.METERS_PER_SECOND
     _attr_native_precipitation_unit = UnitOfPrecipitationDepth.MILLIMETERS
-
-    # Indikujeme, že entita neposkytuje předpověď (forecast), pokud ji neprovážete s jinou integrací
     _attr_supported_features = WeatherEntityFeature(0)
 
     def __init__(self, coordinator: PocasimeteoDataUpdateCoordinator, station_name: str) -> None:
@@ -64,7 +56,6 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         self._attr_name = station_name
         self._attr_unique_id = f"{coordinator.entry.entry_id}_weather"
 
-        # Seskupení pod stejné zařízení jako senzory
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.entry.entry_id)},
             name=station_name,
@@ -74,43 +65,35 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def condition(self) -> str | None:
-        """Return the current condition based on measured rain intensity."""
-        srazky = self._get_value("SrazkyIntenzita")
+        """Return the current condition based on rain."""
+        srazky = self._get_value("rainintensity")
         if srazky is not None and srazky > 0:
             return "rainy"
-        
-        # Lokální stanice nezná oblačnost, vracíme základní validní stav pro HA rozhraní
         return "sunny"
 
     @property
     def native_temperature(self) -> float | None:
-        """Return the platform temperature."""
-        return self._get_value("TeplotaVnejsi")
+        return self._get_value("teplotavnejsi")
 
     @property
     def native_pressure(self) -> float | None:
-        """Return the platform pressure."""
-        return self._get_value("TlakRel")
+        return self._get_value("tlakrel")
 
     @property
     def humidity(self) -> float | None:
-        """Return the name of the humidity."""
-        return self._get_value("VlhkostVnejsi")
+        return self._get_value("vlhkostvnejsi")
 
     @property
     def native_wind_speed(self) -> float | None:
-        """Return the wind speed."""
-        return self._get_value("VitrRychlost")
+        return self._get_value("vitr")
 
     @property
     def wind_bearing(self) -> float | str | None:
-        """Return the wind bearing."""
-        return self._get_value("VitrSmer")
+        return self._get_value("vitrsmer")
 
     @property
     def native_precipitation(self) -> float | None:
-        """Return the native precipitation value."""
-        return self._get_value("SrazkyIntenzita")
+        return self._get_value("rainintensity")
 
     def _get_value(self, sid: str) -> Any:
         """Helper to get a value from coordinator data safely."""
@@ -127,24 +110,25 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         if not self.coordinator.data:
             return attrs
 
-        # 1. Naplníme standardní data senzorů pro zpětnou kompatibilitu karty
+        # Procházíme všechny aktivní senzory z koordinátoru
         for sid, payload in self.coordinator.data.items():
+            # Hodnoty pro starší verzi karty
             attrs[f"{sid}_value"] = payload.get("value")
 
             for key, val in payload.get("attributes", {}).items():
                 attrs[f"{sid}_{key}"] = val
 
-            # 2. Sestavíme strukturu polí (id, type, order) pro dynamické sestavení dashboardu
+            # Struktura pro dynamické řazení grafů ve frontendu
             sensors_metadata.append({
                 "id": sid,
                 "type": payload.get("type", "secondary"),
                 "order": payload.get("order", 200)
             })
 
-        # Seřadíme metadata podle určeného pořadí (order), aby je karta měla rovnou připravená
+        # Seřadíme senzory podle pořadí (order) z const.py
         sensors_metadata.sort(key=lambda x: x["order"])
         
-        # Uložíme pole do atributu 'sensors', který vaše karta pravděpodobně očekává
+        # Předáme kartě kompletní seřazenou strukturu
         attrs["sensors"] = sensors_metadata
 
         return attrs
