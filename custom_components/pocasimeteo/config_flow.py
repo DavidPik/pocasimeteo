@@ -91,15 +91,15 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return vol.Schema(
             {
-                vol.Required(CONF_STATION, default=current_station): str,
-                vol.Required(CONF_API_KEY, default=current_key): str,
+                vol.Required(CONF_STATION, default=current_station): vol.All(str),
+                vol.Required(CONF_API_KEY, default=current_key): vol.All(str),
                 vol.Required(CONF_UPDATE_INTERVAL, default=current_interval): vol.All(int, vol.Range(min=1, max=30)),
                 vol.Optional("forecast_entity_id", default=current_forecast): vol.In([None] + weather_entities),
             }
         )
 
     async def _async_validate_api_key(self, hass: HomeAssistant, api_key: str) -> bool:
-        """Validate API key by calling PočasíMeteo API. Any valid JSON response means success."""
+        """Validate API key by calling PočasíMeteo API."""
         url = API_URL_TEMPLATE.format(api_key=api_key)
 
         try:
@@ -107,11 +107,8 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             async with async_timeout.timeout(10):
                 async with session.get(url) as resp:
                     if resp.status != 200:
-                        _LOGGER.warning("API validation returned HTTP status %s", resp.status)
                         return False
                     data = await resp.json()
-                    
-                    # Pokud server vrátil validní JSON slovník nebo seznam, klíč je v pořádku
                     return isinstance(data, (dict, list))
         except Exception as err:
             _LOGGER.error("API validation exception occurred: %s", err)
@@ -129,12 +126,12 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
+        super().__init__()
         self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None) -> FlowResult:
         """Manage the options menu."""
         if user_input is not None:
-            # Uložíme upravená nastavení a vyvoláme reload integrace
             return self.async_create_entry(title="", data=user_input)
 
         registry = er.async_get(self.hass)
@@ -146,7 +143,6 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
             ]
         )
 
-        # Získáme aktuální hodnoty z konfigurace pro předvyplnění formuláře
         current_interval = self.config_entry.options.get(
             CONF_UPDATE_INTERVAL, 
             self.config_entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL_MINUTES)
