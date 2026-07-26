@@ -15,7 +15,7 @@ from homeassistant.helpers import aiohttp_client
 
 from .const import (
     DOMAIN,
-    API_URL_TEMPLATE,
+    API_URL_BASE,
     CONF_API_KEY,
     CONF_UPDATE_INTERVAL,
     SENSOR_DEFINITIONS,
