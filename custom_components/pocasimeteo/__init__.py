@@ -7,6 +7,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
@@ -36,8 +37,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = PocasimeteoDataUpdateCoordinator(hass, entry)
 
-    await coordinator.async_config_entry_first_refresh()
-    _LOGGER.debug("pocasimeteo: first refresh OK for entry_id=%s", entry.entry_id)
+    # První stažení dat musí proběhnout úspěšně před registrací platforem.
+    # Pokud selže, vyhodí se ConfigEntryNotReady a HA integraci bezpečně pozdrží.
+    try:
+        await coordinator.async_config_entry_first_refresh()
+        _LOGGER.debug("pocasimeteo: first refresh OK for entry_id=%s", entry.entry_id)
+    except Exception as err:
+        _LOGGER.error(
+            "pocasimeteo: initial data fetch failed for entry_id=%s: %s",
+            entry.entry_id,
+            err,
+        )
+        raise ConfigEntryNotReady(f"Cannot connect to PočasíMeteo API: {err}") from err
 
     hass.data.setdefault(DOMAIN, {})
     # Uložíme strukturu jako dict – je to robustnější pro budoucí rozšíření
