@@ -46,7 +46,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self):
         """Fetch and normalize data from PočasíMeteo API."""
         api_key = self.entry.data[CONF_API_KEY]
-        url = API_URL_TEMPLATE.format(api_key=api_key)
+        from .const import API_URL_BASE
+        # Bezpečné složení URL pomocí f-stringu
+        url = f"{API_URL_BASE}?KlicApi={api_key}"
 
         try:
             session = aiohttp_client.async_get_clientsession(self.hass)
