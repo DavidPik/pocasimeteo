@@ -28,7 +28,7 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
     """Handle options updates (reconfiguration) via UI."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
+        """Initialize options flow securely for modern HA Core core-2024+."""
         super().__init__()
         self.config_entry = config_entry
 
@@ -80,11 +80,9 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             interval = user_input[CONF_UPDATE_INTERVAL]
             forecast_entity = user_input.get("forecast_entity_id")
 
-            # Validace API klíče zavoláním serveru PočasíMeteo
             if not await self._async_validate_api_key(self.hass, api_key):
                 errors["base"] = "invalid_api_key"
 
-            # Vytvoření integrace
             if not errors:
                 await self.async_set_unique_id(api_key)
                 self._abort_if_unique_id_configured()
@@ -141,8 +139,6 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _async_validate_api_key(self, hass: HomeAssistant, api_key: str) -> bool:
         """Validate API key by calling PočasíMeteo API."""
-        from .const import API_URL_BASE
-        # Bezpečné složení URL pomocí f-stringu
         url = f"{API_URL_BASE}?KlicApi={api_key}"
 
         try:
@@ -150,7 +146,6 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             async with async_timeout.timeout(10):
                 async with session.get(url) as resp:
                     if resp.status != 200:
-                        _LOGGER.warning("API validation returned HTTP status %s", resp.status)
                         return False
                     data = await resp.json()
                     return isinstance(data, (dict, list))
@@ -160,6 +155,6 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> "PocasimeteoOptionsFlow":
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> PocasimeteoOptionsFlow:
         """Link to Options Flow handler."""
         return PocasimeteoOptionsFlow(config_entry)
