@@ -42,14 +42,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         self._daily_stats: dict[str, dict[str, float]] = {}
         
-        # Paměť pro výpočet pětiminutové intenzity srážek
         self._last_rain_value: float | None = None
         self._last_rain_timestamp: datetime | None = None
 
     async def _async_update_data(self):
         """Fetch and normalize data from PočasíMeteo API."""
         api_key = self.entry.data[CONF_API_KEY]
-        from .const import API_URL_BASE
         url = f"{API_URL_BASE}?KlicApi={api_key}"
 
         try:
@@ -64,24 +62,25 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         self.station_metadata = {}
 
-        if isinstance(raw, list):
-            if len(raw) > 0 and "LokalitaStanice" in raw:
-                meta_payload = raw
+        if isinstance(raw, list) and len(raw) > 0:
+            # Bezpečné vytažení metadat ze segmentu 0
+            meta_payload = raw[0]
+            if isinstance(meta_payload, dict):
                 self.station_metadata["lokalita"] = meta_payload.get("LokalitaStanice")
                 if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
-            if len(raw) > 1 and "Datum" in raw:
-                raw = raw
-            elif len(raw) > 0 and "Datum" in raw:
-                raw = raw
+            # Bezpečná extrakce dat měření ze segmentu 1
+            if len(raw) > 1 and isinstance(raw[1], dict) and "Datum" in raw[1]:
+                raw = raw[1]
+            elif isinstance(raw[0], dict) and "Datum" in raw[0]:
+                raw = raw[0]
             else:
-                raise UpdateFailed("API response does not contain weather data payload")
+                raise UpdateFailed("API response structure is valid, but weather data payload was not found at index 0 or 1")
         
         if not isinstance(raw, dict):
             raise UpdateFailed("Invalid API response format")
 
-        # Uložíme si denní srážky pro entitu weather do metadat před normalizací
         try:
             self.station_metadata["srazky_den"] = float(raw.get("SrazkyDen", 0))
         except (ValueError, TypeError):
@@ -98,7 +97,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         now = datetime.now()
         timestamp_str = now.isoformat()
 
-        # --- Výpočet intenzity srážek (mm/h) ---
         rain_intensity = 0.0
         try:
             current_rain = float(raw.get("SrazkyDen", 0))
@@ -109,25 +107,18 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             time_delta = now - self._last_rain_timestamp
             hours_passed = time_delta.total_seconds() / 3600.0
 
-            # Ošetření půlnočního resetu nebo minimálního času (alespoň 10 sekund pro stabilitu)
             if current_rain >= self._last_rain_value and hours_passed > 0.0027:
                 rain_delta = current_rain - self._last_rain_value
-                # Přepočet delta srážek na hodinovou intenzitu mm/h
                 rain_intensity = round(rain_delta / hours_passed, 2)
             elif current_rain < self._last_rain_value and hours_passed > 0.0027:
-                # Nastala půlnoc – počítáme od nuly do aktuální nové hodnoty
                 rain_intensity = round(current_rain / hours_passed, 2)
         
-        # Uložení aktuálních hodnot do paměti pro příští spuštění
         self._last_rain_value = current_rain
         self._last_rain_timestamp = now
 
-        # Vstříkneme vypočtenou hodnotu intenzity do raw dat pod fiktivním klíčem
         raw["SrazkyIntenzita"] = rain_intensity
 
-        # --- Běžná smyčka parsování prvků ---
         for api_key, value in raw.items():
-            # Vynecháme Datum a SrazkyDen (přesunuto do weather atributů)
             if value is None or api_key in ["Datum", "SrazkyDen"]:
                 continue
 
