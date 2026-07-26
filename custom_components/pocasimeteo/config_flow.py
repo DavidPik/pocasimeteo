@@ -27,9 +27,6 @@ _LOGGER = logging.getLogger(__name__)
 class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
     """Handle options updates (reconfiguration) via UI."""
 
-    # Metoda __init__ byla kompletně odebrána, aby nevznikal konflikt v HA Core.
-    # self.config_entry je přesto plně k dispozici díky základní třídě.
-
     async def async_step_init(self, user_input=None) -> FlowResult:
         """Manage the options menu."""
         if user_input is not None:
@@ -157,4 +154,5 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> PocasimeteoOptionsFlow:
         """Link to Options Flow handler."""
-        return PocasimeteoOptionsFlow(config_entry)
+        # Zde bylo odebráno předávání (config_entry)
+        return PocasimeteoOptionsFlow()
