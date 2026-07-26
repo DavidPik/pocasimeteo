@@ -103,14 +103,19 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose combined attributes, structural metadata, location and webcam URL."""
+        """Expose combined attributes, structural metadata, location, webcam and daily rain."""
         attrs: dict[str, Any] = {}
         sensors_metadata: list[dict[str, Any]] = []
 
-        # Přidání informací o lokalitě a webkameře z koordinátoru
+        # Načtení metadat z koordinátoru
         metadata = getattr(self.coordinator, "station_metadata", {})
         attrs["lokalita_stanice"] = metadata.get("lokalita") or self.coordinator.entry.data.get(CONF_STATION, "Hostivice")
         attrs["url_webkamera"] = metadata.get("webcamera_url") or ""
+        
+        # Zápis celkového denního úhrnu srážek do systémových atributů
+        daily_rain = metadata.get("srazky_den", 0.0)
+        attrs["srazky_den"] = daily_rain
+        attrs["SrazkyDen_value"] = daily_rain  # Fallback pro starší verzi JS karty
 
         if not self.coordinator.data:
             return attrs
@@ -132,4 +137,3 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         attrs["sensors"] = sensors_metadata
 
         return attrs
-
