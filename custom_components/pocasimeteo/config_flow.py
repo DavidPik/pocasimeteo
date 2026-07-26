@@ -24,6 +24,47 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
+    """Handle options updates (reconfiguration) via UI."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
+        super().__init__()
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input=None) -> FlowResult:
+        """Manage the options menu."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        registry = er.async_get(self.hass)
+        weather_entities = sorted(
+            [
+                entity.entity_id
+                for entity in registry.entities.values()
+                if entity.entity_id.startswith("weather.")
+            ]
+        )
+
+        current_interval = self.config_entry.options.get(
+            CONF_UPDATE_INTERVAL, 
+            self.config_entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL_MINUTES)
+        )
+        current_forecast = self.config_entry.options.get("forecast_entity_id")
+        if current_forecast not in weather_entities:
+            current_forecast = None
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_UPDATE_INTERVAL, default=current_interval): vol.All(int, vol.Range(min=1, max=30)),
+                    vol.Optional("forecast_entity_id", default=current_forecast): vol.In([None] + weather_entities),
+                }
+            ),
+        )
+
+
 class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle initial configuration flow for PočasíMeteo."""
 
@@ -116,47 +157,6 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> PocasimeteoOptionsFlow:
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> "PocasimeteoOptionsFlow":
         """Link to Options Flow handler."""
         return PocasimeteoOptionsFlow(config_entry)
-
-
-class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
-    """Handle options updates (reconfiguration) via UI."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        super().__init__()
-        self.config_entry = config_entry
-
-    async def async_step_init(self, user_input=None) -> FlowResult:
-        """Manage the options menu."""
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
-
-        registry = er.async_get(self.hass)
-        weather_entities = sorted(
-            [
-                entity.entity_id
-                for entity in registry.entities.values()
-                if entity.entity_id.startswith("weather.")
-            ]
-        )
-
-        current_interval = self.config_entry.options.get(
-            CONF_UPDATE_INTERVAL, 
-            self.config_entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL_MINUTES)
-        )
-        current_forecast = self.config_entry.options.get("forecast_entity_id")
-        if current_forecast not in weather_entities:
-            current_forecast = None
-
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_UPDATE_INTERVAL, default=current_interval): vol.All(int, vol.Range(min=1, max=30)),
-                    vol.Optional("forecast_entity_id", default=current_forecast): vol.In([None] + weather_entities),
-                }
-            ),
-        )
