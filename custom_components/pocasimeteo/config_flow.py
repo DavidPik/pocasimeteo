@@ -141,13 +141,16 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _async_validate_api_key(self, hass: HomeAssistant, api_key: str) -> bool:
         """Validate API key by calling PočasíMeteo API."""
-        url = API_URL_TEMPLATE.format(api_key=api_key)
+        from .const import API_URL_BASE
+        # Bezpečné složení URL pomocí f-stringu
+        url = f"{API_URL_BASE}?KlicApi={api_key}"
 
         try:
             session = aiohttp_client.async_get_clientsession(hass)
             async with async_timeout.timeout(10):
                 async with session.get(url) as resp:
                     if resp.status != 200:
+                        _LOGGER.warning("API validation returned HTTP status %s", resp.status)
                         return False
                     data = await resp.json()
                     return isinstance(data, (dict, list))
