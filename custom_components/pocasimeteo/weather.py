@@ -112,6 +112,13 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         attrs["lokalita_stanice"] = metadata.get("lokalita") or self.coordinator.entry.data.get(CONF_STATION, "Hostivice")
         attrs["url_webkamera"] = metadata.get("webcamera_url") or ""
         
+        # Klíčové identifikátory pro frontendovou kartu
+        attrs["station_name"] = self._station_name
+        attrs["config_entry_id"] = self.coordinator.entry.entry_id
+        
+        import datetime
+        attrs["timestamp"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
         # Zápis celkového denního úhrnu srážek do systémových atributů
         daily_rain = metadata.get("srazky_den", 0.0)
         attrs["srazky_den"] = daily_rain
