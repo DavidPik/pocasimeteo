@@ -36,16 +36,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     coordinator = PocasimeteoDataUpdateCoordinator(hass, entry)
 
-    try:
-        await coordinator.async_config_entry_first_refresh()
-        _LOGGER.debug("pocasimeteo: first refresh OK for entry_id=%s", entry.entry_id)
-    except Exception as err:
-        _LOGGER.error(
-            "pocasimeteo: initial data fetch failed for entry_id=%s: %s",
-            entry.entry_id,
-            err,
-        )
-        # Continue setup even if API is temporarily unavailable
+    await coordinator.async_config_entry_first_refresh()
+    _LOGGER.debug("pocasimeteo: first refresh OK for entry_id=%s", entry.entry_id)
 
     hass.data.setdefault(DOMAIN, {})
     # Uložíme strukturu jako dict – je to robustnější pro budoucí rozšíření
