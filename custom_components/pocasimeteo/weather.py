@@ -117,6 +117,9 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         # Klíčové identifikátory pro frontendovou kartu
         attrs["station_name"] = self._station_name
         attrs["config_entry_id"] = self.coordinator.entry.entry_id
+
+        # Předání nastaveného intervalu aktualizace frontendové kartě
+        attrs["update_interval"] = self.coordinator.entry.options.get(CONF_UPDATE_INTERVAL, 5)
         
         import datetime
         attrs["timestamp"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
