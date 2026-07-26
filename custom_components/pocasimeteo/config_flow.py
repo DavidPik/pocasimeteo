@@ -132,8 +132,8 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return vol.Schema(
             {
-                vol.Required(CONF_STATION, default=current_station): vol.All(str),
-                vol.Required(CONF_API_KEY, default=current_key): vol.All(str),
+                vol.Required(CONF_STATION, default=current_station): str,
+                vol.Required(CONF_API_KEY, default=current_key): str,
                 vol.Required(CONF_UPDATE_INTERVAL, default=current_interval): vol.All(int, vol.Range(min=1, max=30)),
                 vol.Optional("forecast_entity_id", default=current_forecast): vol.In([None] + weather_entities),
             }
