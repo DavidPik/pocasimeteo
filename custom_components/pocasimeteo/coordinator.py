@@ -72,7 +72,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         return normalized
 
-     def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
+    def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
         """Convert API fields into internal structure dynamically based on API response."""
         result: dict[str, dict] = {}
         timestamp = datetime.now().isoformat()
@@ -91,7 +91,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             # Pokud klíč v const.py nemáme, vytvoříme dynamické ID podle názvu z API
             if internal_sid is None:
-                internal_sid = api_key
+                internal_sid = api_key.lower()
                 from .const import get_dynamic_sensor_meta
                 meta = get_dynamic_sensor_meta(api_key)
             else:
