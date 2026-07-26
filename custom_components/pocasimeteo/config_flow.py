@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-import aiohttp
 import async_timeout
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers import entity_registry as er
@@ -20,8 +19,6 @@ from .const import (
     CONF_UPDATE_INTERVAL,
     API_URL_TEMPLATE,
     DEFAULT_UPDATE_INTERVAL_MINUTES,
-    DEFAULT_SENSORS_OPTIONS,
-    DEFAULT_ALL_SENSOR_IDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,68 +29,46 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 3
 
-    # ----------------------------------------------------------------------
-    # Step: User input
-    # ----------------------------------------------------------------------
     async def async_step_user(self, user_input=None) -> FlowResult:
+        """Handle user step for adding a new station."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             station_name = user_input[CONF_STATION]
-            api_key = user_input[CONF_API_KEY]
+            api_key = user_input[CONF_API_KEY].strip()
             interval = user_input[CONF_UPDATE_INTERVAL]
             forecast_entity = user_input.get("forecast_entity_id")
 
-            # Validate update interval
-            try:
-                interval = int(interval)
-                if interval < 1 or interval > 30:
-                    errors["base"] = "invalid_interval"
-            except Exception:
-                errors["base"] = "invalid_interval"
+            # Validace API klíče zavoláním serveru PočasíMeteo
+            if not await self._async_validate_api_key(self.hass, api_key):
+                errors["base"] = "invalid_api_key"
 
-            # Validate API key by calling PočasíMeteo API
-            if not errors:
-                if not await self._async_validate_api_key(self.hass, api_key):
-                    errors["base"] = "invalid_api_key"
-
-            # Validate forecast entity
-            if not errors and forecast_entity:
-                if not self._is_valid_forecast_entity(self.hass, forecast_entity):
-                    errors["base"] = "invalid_forecast_entity"
-
-            # Create entry
+            # Vytvoření integrace
             if not errors:
                 await self.async_set_unique_id(api_key)
                 self._abort_if_unique_id_configured()
 
                 return self.async_create_entry(
                     title=station_name,
-                    # DATA: základní konfigurace integrace
                     data={
                         CONF_STATION: station_name,
                         CONF_API_KEY: api_key,
                         CONF_UPDATE_INTERVAL: interval,
                     },
-                    # OPTIONS: volitelné nastavení (interval, forecast entity, senzory)
                     options={
-                        "update_interval": interval,
+                        CONF_UPDATE_INTERVAL: interval,
                         "forecast_entity_id": forecast_entity or "",
-                        # Only one canonical structure: list of sensor objects
-                        "sensors": DEFAULT_SENSORS_OPTIONS.copy(),
                     },
                 )
 
         return self.async_show_form(
             step_id="user",
-            data_schema=await self._get_schema(),
+            data_schema=await self._get_schema(user_input),
             errors=errors,
         )
 
-    # ----------------------------------------------------------------------
-    # Schema for initial form
-    # ----------------------------------------------------------------------
-    async def _get_schema(self) -> vol.Schema:
+    async def _get_schema(self, user_input=None) -> vol.Schema:
+        """Generate schema dynamically including available weather entities."""
         registry = er.async_get(self.hass)
         weather_entities = sorted(
             [
@@ -103,25 +78,28 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ]
         )
 
+        current_station = ""
+        current_key = ""
+        current_interval = DEFAULT_UPDATE_INTERVAL_MINUTES
+        current_forecast = None
+
+        if user_input:
+            current_station = user_input.get(CONF_STATION, "")
+            current_key = user_input.get(CONF_API_KEY, "")
+            current_interval = user_input.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL_MINUTES)
+            current_forecast = user_input.get("forecast_entity_id")
+
         return vol.Schema(
             {
-                vol.Required(CONF_STATION): str,
-                vol.Required(CONF_API_KEY): str,
-                vol.Required(
-                    CONF_UPDATE_INTERVAL,
-                    default=DEFAULT_UPDATE_INTERVAL_MINUTES,
-                ): vol.All(int, vol.Range(min=1, max=30)),
-                vol.Optional("forecast_entity_id", default=None): vol.In(
-                    [None] + weather_entities
-                ),
+                vol.Required(CONF_STATION, default=current_station): str,
+                vol.Required(CONF_API_KEY, default=current_key): str,
+                vol.Required(CONF_UPDATE_INTERVAL, default=current_interval): vol.All(int, vol.Range(min=1, max=30)),
+                vol.Optional("forecast_entity_id", default=current_forecast): vol.In([None] + weather_entities),
             }
         )
 
-    # ----------------------------------------------------------------------
-    # API key validation
-    # ----------------------------------------------------------------------
     async def _async_validate_api_key(self, hass: HomeAssistant, api_key: str) -> bool:
-        """Validate API key by calling PočasíMeteo API."""
+        """Validate API key by calling PočasíMeteo API. Any valid JSON response means success."""
         url = API_URL_TEMPLATE.format(api_key=api_key)
 
         try:
@@ -129,155 +107,60 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             async with async_timeout.timeout(10):
                 async with session.get(url) as resp:
                     if resp.status != 200:
-                        _LOGGER.warning("API returned HTTP %s", resp.status)
+                        _LOGGER.warning("API validation returned HTTP status %s", resp.status)
                         return False
                     data = await resp.json()
+                    
+                    # Pokud server vrátil validní JSON slovník nebo seznam, klíč je v pořádku
+                    return isinstance(data, (dict, list))
         except Exception as err:
-            _LOGGER.error("API validation error: %s", err)
+            _LOGGER.error("API validation exception occurred: %s", err)
             return False
 
-        # API returns either list or dict
-        if isinstance(data, list) and data:
-            return True
-        if isinstance(data, dict) and ("data" in data or "Zprava" in data):
-            return True
-
-        return False
-
-    # ----------------------------------------------------------------------
-    # Forecast entity validation
-    # ----------------------------------------------------------------------
-    def _is_valid_forecast_entity(self, hass: HomeAssistant, entity_id: str) -> bool:
-        """Check if selected entity exists and is a weather entity."""
-        if not entity_id:
-            return True
-
-        state = hass.states.get(entity_id)
-        if not state:
-            return False
-
-        return state.domain == "weather"
-
-    # ----------------------------------------------------------------------
-    # Options flow
-    # ----------------------------------------------------------------------
-    def async_get_options_flow(self, config_entry):
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> PocasimeteoOptionsFlow:
+        """Link to Options Flow handler."""
         return PocasimeteoOptionsFlow(config_entry)
 
 
-# ======================================================================
-# Options Flow
-# ======================================================================
-
 class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
-    """Handle options for PočasíMeteo."""
+    """Handle options updates (reconfiguration) via UI."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry):
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
         self.config_entry = config_entry
-        self._sensor_ids: list[str] = []
-        self._sensor_types: dict[str, str] = {}
 
-    # ------------------------------------------------------------------
-    # Step 1: Select sensors
-    # ------------------------------------------------------------------
-    async def async_step_init(self, user_input=None):
-        # ČTENÍ OPTIONS: senzory jsou vždy v config_entry.options["sensors"]
-        sensors = self.config_entry.options.get(
-            "sensors",
-            DEFAULT_SENSORS_OPTIONS.copy(),
-        )
-        existing_ids = [s["id"] for s in sensors]
+    async def async_step_init(self, user_input=None) -> FlowResult:
+        """Manage the options menu."""
+        if user_input is not None:
+            # Uložíme upravená nastavení a vyvoláme reload integrace
+            return self.async_create_entry(title="", data=user_input)
 
-        schema = vol.Schema(
-            {
-                vol.Optional("sensor_list", default=existing_ids): vol.All([str]),
-                vol.Optional("add_custom_sensor", default=""): str,
-            }
+        registry = er.async_get(self.hass)
+        weather_entities = sorted(
+            [
+                entity.entity_id
+                for entity in registry.entities.values()
+                if entity.entity_id.startswith("weather.")
+            ]
         )
 
-        if user_input is not None:
-            sensor_list = user_input.get("sensor_list", [])
-            custom = user_input.get("add_custom_sensor", "").strip()
+        # Získáme aktuální hodnoty z konfigurace pro předvyplnění formuláře
+        current_interval = self.config_entry.options.get(
+            CONF_UPDATE_INTERVAL, 
+            self.config_entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL_MINUTES)
+        )
+        current_forecast = self.config_entry.options.get("forecast_entity_id")
+        if current_forecast not in weather_entities:
+            current_forecast = None
 
-            if custom:
-                sensor_list.append(custom)
-
-            # Remove duplicates
-            sensor_list = list(dict.fromkeys(sensor_list))
-
-            self._sensor_ids = sensor_list
-            return await self.async_step_types()
-
-        return self.async_show_form(step_id="init", data_schema=schema)
-
-    # ------------------------------------------------------------------
-    # Step 2: Assign types
-    # ------------------------------------------------------------------
-    async def async_step_types(self, user_input=None):
-        sensor_ids = getattr(self, "_sensor_ids", [])
-
-        schema_dict = {}
-        for sid in sensor_ids:
-            # Default type based on definitions
-            default_type = (
-                "primary"
-                if sid in DEFAULT_ALL_SENSOR_IDS
-                and sid
-                in [
-                    s["id"]
-                    for s in DEFAULT_SENSORS_OPTIONS
-                    if s["type"] == "primary"
-                ]
-                else "secondary"
-            )
-            schema_dict[vol.Required(f"type_{sid}", default=default_type)] = vol.In(
-                ["primary", "secondary"]
-            )
-
-        schema = vol.Schema(schema_dict)
-
-        if user_input is not None:
-            self._sensor_types = {
-                sid: user_input[f"type_{sid}"] for sid in sensor_ids
-            }
-            return await self.async_step_order()
-
-        return self.async_show_form(step_id="types", data_schema=schema)
-
-    # ------------------------------------------------------------------
-    # Step 3: Assign order
-    # ------------------------------------------------------------------
-    async def async_step_order(self, user_input=None):
-        sensor_ids = getattr(self, "_sensor_ids", [])
-
-        schema_dict = {}
-        for sid in sensor_ids:
-            schema_dict[vol.Required(f"order_{sid}", default=1)] = vol.All(
-                int, vol.Range(min=1, max=999)
-            )
-
-        schema = vol.Schema(schema_dict)
-
-        if user_input is not None:
-            sensors_final = []
-            for sid in sensor_ids:
-                sensors_final.append(
-                    {
-                        "id": sid,
-                        "type": self._sensor_types[sid],
-                        "order": user_input[f"order_{sid}"],
-                    }
-                )
-
-            # Sloučení existujících options s novými senzory
-            new_options = dict(self.config_entry.options)
-            new_options["sensors"] = sensors_final
-
-            # V OptionsFlow je `data` = nové options
-            return self.async_create_entry(
-                title="Senzory",
-                data=new_options,
-            )
-
-        return self.async_show_form(step_id="order", data_schema=schema)
-        
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_UPDATE_INTERVAL, default=current_interval): vol.All(int, vol.Range(min=1, max=30)),
+                    vol.Optional("forecast_entity_id", default=current_forecast): vol.In([None] + weather_entities),
+                }
+            ),
+        )
