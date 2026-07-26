@@ -1,202 +1,110 @@
-"""Sensor entities for PočasíMeteo integration.
-
-This module contains ONLY:
-- entity creation based on config entry options,
-- mapping coordinator data to Home Assistant sensor entities,
-- exposing min/max/timestamp attributes (computed in coordinator),
-- using centralized metadata from const.py.
-
-All structural definitions (names, units, icons, API mapping)
-are stored in const.py.
-"""
+"""Sensor entities for PočasíMeteo integration."""
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity import DeviceInfo
 
-from .const import DOMAIN, SENSOR_DEFINITIONS
+from .const import DOMAIN, SENSOR_DEFINITIONS, get_dynamic_sensor_meta, CONF_STATION
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Setup entry: create sensor entities based on options["sensors"]
-# ---------------------------------------------------------------------------
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up PočasíMeteo sensor entities."""
+    """Set up PočasíMeteo sensor entities dynamically based on API data."""
     store = hass.data[DOMAIN][entry.entry_id]
+    coordinator: PocasimeteoDataUpdateCoordinator = store["coordinator"]
 
-    # Robustně zjistíme koordinátor – buď je uložen přímo,
-    # nebo v dictu pod klíčem "coordinator"
-    if isinstance(store, PocasimeteoDataUpdateCoordinator):
-        coordinator: PocasimeteoDataUpdateCoordinator = store
-    else:
-        coordinator = store["coordinator"]
+    # Pokud koordinátor nemá žádná data, nemůžeme nic vytvořit
+    if not coordinator.data:
+        _LOGGER.error("pocasimeteo.sensor: No data available in coordinator to create entities")
+        return
 
-    sensors_opt = entry.options.get("sensors", [])
+    station_name = entry.data.get(CONF_STATION, "Meteostanice")
     entities: list[PocasimeteoSensor] = []
 
     _LOGGER.debug(
-        "pocasimeteo.sensor: async_setup_entry, entry_id=%s, sensors_opt=%s",
+        "pocasimeteo.sensor: Starting dynamic entity creation for entry_id=%s",
         entry.entry_id,
-        sensors_opt,
     )
 
-    for sensor_def in sensors_opt:
-        sid = sensor_def["id"]
-        s_type = sensor_def["type"]
-        order = sensor_def["order"]
-
+    # Procházíme klíče, které reálně vrátil koordinátor z API
+    for sid in coordinator.data.keys():
         meta = SENSOR_DEFINITIONS.get(sid)
 
         if meta is None:
-            # Custom sensor (not defined in const.py)
-            _LOGGER.debug(
-                "pocasimeteo.sensor: creating custom sensor id=%s type=%s order=%s",
-                sid,
-                s_type,
-                order,
-            )
-            entities.append(
-                PocasimeteoSensor(
-                    coordinator=coordinator,
-                    sensor_id=sid,
-                    name=sid,
-                    unit=None,
-                    icon="mdi:help-circle",
-                    sensor_type=s_type,
-                    order=order,
-                )
-            )
-            continue
+            # Dynamický senzor (např. Te1-Te5, Co2, Pm1 atd. – získají se z helperu)
+            meta = get_dynamic_sensor_meta(sid)
+            _LOGGER.debug("pocasimeteo.sensor: Creating dynamic sensor id=%s", sid)
+        else:
+            _LOGGER.debug("pocasimeteo.sensor: Creating standard sensor id=%s", sid)
 
-        # Standard sensor
-        _LOGGER.debug(
-            "pocasimeteo.sensor: creating standard sensor id=%s name=%s type=%s order=%s",
-            sid,
-            meta["name"],
-            s_type,
-            order,
-        )
         entities.append(
             PocasimeteoSensor(
                 coordinator=coordinator,
                 sensor_id=sid,
-                name=meta["name"],
-                unit=meta["unit"],
-                icon=meta["icon"],
-                sensor_type=s_type,
-                order=order,
+                meta=meta,
+                station_name=station_name,
             )
         )
 
-    _LOGGER.debug(
-        "pocasimeteo.sensor: async_setup_entry prepared %d entities",
-        len(entities),
-    )
+    _LOGGER.info("pocasimeteo.sensor: Registering %d sensors to Home Assistant", len(entities))
     async_add_entities(entities)
 
 
-# ---------------------------------------------------------------------------
-# Sensor Entity
-# ---------------------------------------------------------------------------
-class PocasimeteoSensor(SensorEntity):
-    """Representation of a single PočasíMeteo sensor."""
-
-    _attr_should_poll = False
+class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], SensorEntity):
+    """Representation of a PočasíMeteo sensor integrated via CoordinatorEntity."""
 
     def __init__(
         self,
         coordinator: PocasimeteoDataUpdateCoordinator,
         sensor_id: str,
-        name: str,
-        unit: str | None,
-        icon: str,
-        sensor_type: str,
-        order: int,
+        meta: dict[str, Any],
+        station_name: str,
     ) -> None:
-        self.coordinator = coordinator
+        """Initialize the sensor."""
+        super().__init__(coordinator)
         self._sensor_id = sensor_id
-        self._attr_name = name
-        self._attr_icon = icon
-        self._attr_native_unit_of_measurement = unit
-        self._sensor_type = sensor_type
-        self._order = order
-
+        
+        # Nastavení základních atributů entity
+        self._attr_name = f"{station_name} {meta['name']}"
+        self._attr_icon = meta["icon"]
+        self._attr_native_unit_of_measurement = meta["unit"] if meta["unit"] else None
         self._attr_unique_id = f"{coordinator.entry.entry_id}_{sensor_id}"
-        self._unsub_coordinator: Callable[[], None] | None = None
+        
+        # Povolíme dlouhodobé statistiky (LTS), pokud je hodnota číselná
+        self._attr_state_class = SensorStateClass.MEASUREMENT
 
-        _LOGGER.debug(
-            "pocasimeteo.sensor: created entity unique_id=%s name=%s",
-            self._attr_unique_id,
-            name,
+        # Seskupení všech senzorů pod jedno fyzické zařízení v HA rozhraní
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, coordinator.entry.entry_id)},
+            name=station_name,
+            manufacturer="PočasíMeteo.cz",
+            model="Meteostanice",
         )
-
-    # ------------------------------------------------------------------
-    # Coordinator update hook
-    # ------------------------------------------------------------------
-    @property
-    def available(self) -> bool:
-        """Entity is available if coordinator has data for this sensor."""
-        data = self.coordinator.data
-        available = data is not None and self._sensor_id in data
-        return available
 
     @property
     def native_value(self) -> Any:
-        """Return the sensor's main value."""
-        data = self.coordinator.data
-        if not data:
+        """Return the sensor's current value directly from coordinator data."""
+        if not self.coordinator.data or self._sensor_id not in self.coordinator.data:
             return None
-
-        payload = data.get(self._sensor_id)
-        if not payload:
-            return None
-
-        return payload.get("value")
+        return self.coordinator.data[self._sensor_id].get("value")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional attributes (min/max/timestamp)."""
-        data = self.coordinator.data
-        if not data:
+        """Return min/max statistics and timestamp from coordinator data."""
+        if not self.coordinator.data or self._sensor_id not in self.coordinator.data:
             return {}
-
-        payload = data.get(self._sensor_id)
-        if not payload:
-            return {}
-
-        return payload.get("attributes", {})
-
-    async def async_added_to_hass(self) -> None:
-        """Register coordinator listener."""
-        _LOGGER.debug(
-            "pocasimeteo.sensor: async_added_to_hass for %s",
-            self._attr_unique_id,
-        )
-        # DataUpdateCoordinator.async_add_listener vrací funkci pro odhlášení
-        self._unsub_coordinator = self.coordinator.async_add_listener(
-            self.async_write_ha_state
-        )
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Remove coordinator listener."""
-        _LOGGER.debug(
-            "pocasimeteo.sensor: async_will_remove_from_hass for %s",
-            self._attr_unique_id,
-        )
-        if self._unsub_coordinator is not None:
-            self._unsub_coordinator()
-            self._unsub_coordinator = None
-            
+        return self.coordinator.data[self._sensor_id].get("attributes", {})
