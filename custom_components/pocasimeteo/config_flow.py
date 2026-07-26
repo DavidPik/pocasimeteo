@@ -27,10 +27,8 @@ _LOGGER = logging.getLogger(__name__)
 class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
     """Handle options updates (reconfiguration) via UI."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow securely for modern HA Core core-2024+."""
-        super().__init__()
-        self.config_entry = config_entry
+    # V konstruktoru se v moderním HA nepředává config_entry ručně.
+    # Základní třída si instanci config_entry ukládá automaticky do self.config_entry.
 
     async def async_step_init(self, user_input=None) -> FlowResult:
         """Manage the options menu."""
@@ -46,10 +44,12 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
             ]
         )
 
+        # Bezpečné vytažení aktuálního intervalu z config_entry (který HA drží automaticky)
         current_interval = self.config_entry.options.get(
             CONF_UPDATE_INTERVAL, 
             self.config_entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL_MINUTES)
         )
+        
         current_forecast = self.config_entry.options.get("forecast_entity_id")
         if current_forecast not in weather_entities:
             current_forecast = None
