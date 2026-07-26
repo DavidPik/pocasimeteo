@@ -120,27 +120,31 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose combined attributes from key sensors including UV and Solar Radiation."""
+        """Expose combined attributes and structural metadata for frontend card."""
         attrs: dict[str, Any] = {}
+        sensors_metadata: list[dict[str, Any]] = []
 
-        # Zachováme strukturu pro vaši frontendovou kartu
-        for sid in [
-            "TeplotaVnejsi",
-            "VlhkostVnejsi",
-            "TlakRel",
-            "VitrRychlost",
-            "VitrSmer",
-            "SrazkyIntenzita",
-            "SlunZareni",
-            "UVIndex",
-        ]:
-            if not self.coordinator.data or sid not in self.coordinator.data:
-                continue
+        if not self.coordinator.data:
+            return attrs
 
-            payload = self.coordinator.data[sid]
+        # 1. Naplníme standardní data senzorů pro zpětnou kompatibilitu karty
+        for sid, payload in self.coordinator.data.items():
             attrs[f"{sid}_value"] = payload.get("value")
 
             for key, val in payload.get("attributes", {}).items():
                 attrs[f"{sid}_{key}"] = val
+
+            # 2. Sestavíme strukturu polí (id, type, order) pro dynamické sestavení dashboardu
+            sensors_metadata.append({
+                "id": sid,
+                "type": payload.get("type", "secondary"),
+                "order": payload.get("order", 200)
+            })
+
+        # Seřadíme metadata podle určeného pořadí (order), aby je karta měla rovnou připravená
+        sensors_metadata.sort(key=lambda x: x["order"])
+        
+        # Uložíme pole do atributu 'sensors', který vaše karta pravděpodobně očekává
+        attrs["sensors"] = sensors_metadata
 
         return attrs
