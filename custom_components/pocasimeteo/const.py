@@ -12,7 +12,7 @@ CONF_STATION = "station_name"
 CONF_API_KEY = "api_key"               
 CONF_UPDATE_INTERVAL = "update_interval"  
 
-API_URL_BASE = "https://pocasimeteo.cz"
+API_URL_BASE = "https://ext.pocasimeteo.cz/ms/api/weather"
 
 DEFAULT_UPDATE_INTERVAL_MINUTES = 5
 DEFAULT_UPDATE_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL_MINUTES)
