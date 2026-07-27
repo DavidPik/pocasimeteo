@@ -162,8 +162,18 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
             else:
                 secondary_entities.append(real_entity_id)
 
-        # Předáme kartě pole se skutečnými, živými systémovými jmény (např. sensor.gar632_teplota_venkovni)
+            sensors_metadata.append({
+                "id": sid,                         # např. teplota_venkovni
+                "entity_id": real_entity_id,       # např. sensor.gar632_teplota_venkovni
+                "type": s_type,
+                "order": payload.get("order", 200)
+            })
+
+        sensors_metadata.sort(key=lambda x: x["order"])
+        
+        # DEFINITIVNÍ OPRAVA: Publikujeme hotová pole pro všechny verze karty!
         attrs["primary_sensors"] = primary_entities
         attrs["secondary_sensors"] = secondary_entities
+        attrs["sensors"] = sensors_metadata  # <--- TENTO ŘÁDEK CHYBĚL
 
         return attrs
