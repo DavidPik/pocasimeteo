@@ -60,19 +60,22 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         self.station_metadata = {}
 
+        # OPRAVA PARSOVÁNÍ: Bezpečná extrakce prvků z listu
         if isinstance(raw, list) and len(raw) > 0:
-            meta_payload = raw
+            # Segment 0 obsahuje metadata o lokalitě a kameře
+            meta_payload = raw[0]
             if isinstance(meta_payload, dict):
                 self.station_metadata["lokalita"] = meta_payload.get("LokalitaStanice")
                 if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
-            if len(raw) > 1 and isinstance(raw, dict) and "Datum" in raw:
-                raw = raw
-            elif isinstance(raw, dict) and "Datum" in raw:
-                raw = raw
+            # Segment 1 obsahuje nejnovější naměřená data weather
+            if len(raw) > 1 and isinstance(raw[1], dict) and "Datum" in raw[1]:
+                raw = raw[1]
+            elif isinstance(raw[0], dict) and "Datum" in raw[0]:
+                raw = raw[0]
             else:
-                raise UpdateFailed("API response structure valid, but weather payload missing")
+                raise UpdateFailed("API response structure is valid, but weather data payload was not found at index 0 or 1")
         
         if not isinstance(raw, dict):
             raise UpdateFailed("Invalid API response format")
@@ -103,7 +106,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self._last_rain_timestamp = now
         raw["SrazkyIntenzita"] = rain_intensity
 
-        # Normalizujeme surová data do vnitřní čisté struktury
         normalized = self._normalize_data(raw)
         self._update_daily_stats(normalized)
 
