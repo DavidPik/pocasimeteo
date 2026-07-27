@@ -49,7 +49,6 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-
 class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], SensorEntity):
     """Representation of a PočasíMeteo sensor."""
 
@@ -65,12 +64,18 @@ class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], Sen
         self._sensor_id = sensor_id
         self._meta = meta
         
-        # Generuje čitelný název, ze kterého HA vyrobí např. sensor.gar632_teplota_vnejsi
         self._attr_name = f"{station_name} {meta['name']}"
         self._attr_icon = meta["icon"]
         self._attr_native_unit_of_measurement = meta["unit"] if meta["unit"] else None
         self._attr_unique_id = f"{coordinator.entry.entry_id}_{sensor_id}"
-        self._attr_state_class = SensorStateClass.MEASUREMENT
+        
+        # OPRAVA: Povolíme dlouhodobé statistiky (LTS) POUZE v případě, že hodnota je reálné číslo!
+        # U textových hodnot (jako jsou zprávy ze serveru) zůstane state_class rovna None.
+        payload = coordinator.data.get(sensor_id, {}) if coordinator.data else {}
+        if payload.get("is_numeric", True):
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+        else:
+            self._attr_state_class = None
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, coordinator.entry.entry_id)},
