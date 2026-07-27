@@ -30,7 +30,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, entry):
         self.hass = hass
         self.entry = entry
-
         update_interval_minutes = entry.options.get(CONF_UPDATE_INTERVAL, entry.data.get(CONF_UPDATE_INTERVAL, 5))
 
         super().__init__(
@@ -41,7 +40,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
         self._daily_stats: dict[str, dict[str, float]] = {}
-        
         self._last_rain_value: float | None = None
         self._last_rain_timestamp: datetime | None = None
 
@@ -63,18 +61,18 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self.station_metadata = {}
 
         if isinstance(raw, list) and len(raw) > 0:
-            meta_payload = raw[0]
+            meta_payload = raw
             if isinstance(meta_payload, dict):
                 self.station_metadata["lokalita"] = meta_payload.get("LokalitaStanice")
                 if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
-            if len(raw) > 1 and isinstance(raw[1], dict) and "Datum" in raw[1]:
-                raw = raw[1]
-            elif isinstance(raw[0], dict) and "Datum" in raw[0]:
-                raw = raw[0]
+            if len(raw) > 1 and isinstance(raw, dict) and "Datum" in raw:
+                raw = raw
+            elif isinstance(raw, dict) and "Datum" in raw:
+                raw = raw
             else:
-                raise UpdateFailed("API response data payload structure not recognized")
+                raise UpdateFailed("API response structure valid, but weather payload missing")
         
         if not isinstance(raw, dict):
             raise UpdateFailed("Invalid API response format")
@@ -84,19 +82,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         except (ValueError, TypeError):
             self.station_metadata["srazky_den"] = 0.0
 
-        normalized = self._normalize_data(raw)
-        self._update_daily_stats(normalized)
-
-        return normalized
-
-    def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
-        """Convert API fields into internal structure using clean Czech keys from const.py."""
-        result: dict[str, dict] = {}
-        now = datetime.now()
-        timestamp_str = now.isoformat()
-
-        # --- Výpočet pětiminutové intenzity srážek ---
+        # Spočítáme 5min intenzitu srážek
         rain_intensity = 0.0
+        now = datetime.now()
         try:
             current_rain = float(raw.get("SrazkyDen", 0))
         except (ValueError, TypeError):
@@ -107,18 +95,26 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             hours_passed = time_delta.total_seconds() / 3600.0
 
             if current_rain >= self._last_rain_value and hours_passed > 0.0027:
-                rain_delta = current_rain - self._last_rain_value
-                rain_intensity = round(rain_delta / hours_passed, 2)
+                rain_intensity = round((current_rain - self._last_rain_value) / hours_passed, 2)
             elif current_rain < self._last_rain_value and hours_passed > 0.0027:
                 rain_intensity = round(current_rain / hours_passed, 2)
         
         self._last_rain_value = current_rain
         self._last_rain_timestamp = now
-
-        # Vstříkneme virtuální klíč intenzity do raw dat
         raw["SrazkyIntenzita"] = rain_intensity
 
-        # --- Spárování polí podle const.py ---
+        # Normalizujeme surová data do vnitřní čisté struktury
+        normalized = self._normalize_data(raw)
+        self._update_daily_stats(normalized)
+
+        return normalized
+
+    def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
+        """Map API fields directly to clean internal Czech IDs."""
+        result: dict[str, dict] = {}
+        timestamp_str = datetime.now().isoformat()
+
+        # 1. Spárujeme známé senzory z const.py
         for sid, meta in SENSOR_DEFINITIONS.items():
             api_key = meta["api_key"]
             value = raw.get(api_key)
@@ -128,39 +124,29 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             if isinstance(value, str):
                 try:
-                    if "." in value:
-                        value = float(value)
-                    else:
-                        value = int(value)
+                    value = float(value) if "." in value else int(value)
                 except ValueError:
                     pass
 
             result[sid] = {
                 "value": value,
-                "api_key": api_key,
-                "type": meta.get("type", "secondary"),
-                "order": meta.get("order", 200),
-                "attributes": {
-                    "timestamp": timestamp_str,
-                },
+                "type": meta["type"],
+                "order": meta["order"],
+                "attributes": {"timestamp": timestamp_str},
             }
 
-        # --- Zpracování případných dynamických neznámých čidel ---
+        # 2. Spárujeme případná nová dynamická čidla ze serveru
         for api_key, value in raw.items():
-            if value is None or api_key in ["Datum", "SrazkyDen"]:
+            if value is None or api_key in ["Datum", "SrazkyDen", "SrazkyIntenzita"]:
                 continue
 
-            # Pokud klíč už v result máme (protože byl v SENSOR_DEFINITIONS), přeskočíme ho
-            already_mapped = any(m.get("api_key") == api_key for m in SENSOR_DEFINITIONS.values())
-            if already_mapped or api_key == "SrazkyIntenzita":
+            already_mapped = any(m["api_key"] == api_key for m in SENSOR_DEFINITIONS.values())
+            if already_mapped:
                 continue
 
             if isinstance(value, str):
                 try:
-                    if "." in value:
-                        value = float(value)
-                    else:
-                        value = int(value)
+                    value = float(value) if "." in value else int(value)
                 except ValueError:
                     pass
 
@@ -170,18 +156,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             result[sid] = {
                 "value": value,
-                "api_key": api_key,
-                "type": meta.get("type", "secondary"),
-                "order": meta.get("order", 200),
-                "attributes": {
-                    "timestamp": timestamp_str,
-                },
+                "type": meta["type"],
+                "order": meta["order"],
+                "attributes": {"timestamp": timestamp_str},
             }
 
         return result
 
     def _update_daily_stats(self, data: dict[str, dict]):
-        """Compute daily min/max values for each numeric sensor."""
+        """Compute min/max values securely using Czech IDs."""
         today = date.today()
 
         if "_date" not in self._daily_stats or self._daily_stats["_date"] != today:
@@ -189,12 +172,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         for sid, payload in data.items():
             value = payload["value"]
-
             if not isinstance(value, (int, float)):
                 continue
 
             stats = self._daily_stats.setdefault(sid, {"min": value, "max": value})
-
             if value < stats["min"]:
                 stats["min"] = value
             if value > stats["max"]:
