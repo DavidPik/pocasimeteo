@@ -58,27 +58,36 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"API request failed: {err}") from err
 
+        # OŠETŘENÍ RATE LIMITU: Pokud server posílá chybové hlášení, zastavíme parsování
+        if isinstance(raw, dict) and "Zprava" in raw:
+            raise UpdateFailed(f"PočasíMeteo API Error: {raw['Zprava']}")
+
         self.station_metadata = {}
 
-        # OPRAVA PARSOVÁNÍ: Bezpečná extrakce prvků z listu
         if isinstance(raw, list) and len(raw) > 0:
-            # Segment 0 obsahuje metadata o lokalitě a kameře
             meta_payload = raw[0]
             if isinstance(meta_payload, dict):
                 self.station_metadata["lokalita"] = meta_payload.get("LokalitaStanice")
                 if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
-            # Segment 1 obsahuje nejnovější naměřená data weather
+            # Pokud limit sice neprošel přes dict, ale pole je zablokované chybovou zprávou
+            if len(raw) > 1 and isinstance(raw[1], dict) and "Zprava" in raw[1]:
+                raise UpdateFailed(f"PočasíMeteo API Error: {raw[1]['Zprava']}")
+
             if len(raw) > 1 and isinstance(raw[1], dict) and "Datum" in raw[1]:
                 raw = raw[1]
             elif isinstance(raw[0], dict) and "Datum" in raw[0]:
                 raw = raw[0]
             else:
-                raise UpdateFailed("API response structure is valid, but weather data payload was not found at index 0 or 1")
+                raise UpdateFailed("API response structure valid, but weather payload missing or rate limited")
         
         if not isinstance(raw, dict):
             raise UpdateFailed("Invalid API response format")
+
+        # Pokud se v datech objeví textová chyba chránící frekvenci volání
+        if "Zprava" in raw:
+            raise UpdateFailed(f"PočasíMeteo API Limit: {raw['Zprava']}")
 
         try:
             self.station_metadata["srazky_den"] = float(raw.get("SrazkyDen", 0))
@@ -134,6 +143,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 "value": value,
                 "type": meta["type"],
                 "order": meta["order"],
+                "is_numeric": isinstance(value, (int, float)),
                 "attributes": {"timestamp": timestamp_str},
             }
 
@@ -160,6 +170,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 "value": value,
                 "type": meta["type"],
                 "order": meta["order"],
+                "is_numeric": isinstance(value, (int, float)),
                 "attributes": {"timestamp": timestamp_str},
             }
 
