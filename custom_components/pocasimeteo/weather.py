@@ -1,47 +1,3 @@
-"""Weather entity for PočasíMeteo integration."""
-
-from __future__ import annotations
-
-import logging
-from typing import Any
-
-from homeassistant.components.weather import (
-    WeatherEntity,
-    WeatherEntityFeature,
-)
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.const import (
-    UnitOfTemperature,
-    UnitOfPressure,
-    UnitOfSpeed,
-    UnitOfPrecipitationDepth,
-)
-
-# OPRAVA: Přidán chybějící import CONF_UPDATE_INTERVAL z const.py
-from .const import DOMAIN, CONF_STATION, CONF_UPDATE_INTERVAL
-from .coordinator import PocasimeteoDataUpdateCoordinator
-
-_LOGGER = logging.getLogger(__name__)
-
-
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    """Set up PočasíMeteo weather entity."""
-    store = hass.data[DOMAIN][entry.entry_id]
-    coordinator: PocasimeteoDataUpdateCoordinator = store["coordinator"]
-
-    station_name = entry.data.get(CONF_STATION, "Meteostanice")
-
-    async_add_entities([PocasimeteoWeather(coordinator, station_name)])
-
-
 class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], WeatherEntity):
     """Representation of PočasíMeteo weather summary using CoordinatorEntity."""
 
@@ -108,9 +64,6 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         """Expose combined attributes and structural metadata formatted precisely for the custom card."""
         attrs: dict[str, Any] = {}
         sensors_metadata: list[dict[str, Any]] = []
-        
-        primary_sensors: list[str] = []
-        secondary_sensors: list[str] = []
 
         metadata = getattr(self.coordinator, "station_metadata", {})
         attrs["lokalita_stanice"] = metadata.get("lokalita") or self._station_name
@@ -132,6 +85,7 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         for sid, payload in self.coordinator.data.items():
             val = payload.get("value")
             
+            # DORUČENÍ ATRIBUTŮ POD ČISTÝM NÁZVEM: Vygeneruje teplota_venkovni_value, teplota_venkovni_min atd.
             attrs[f"{sid}_value"] = val
 
             if sid == "vitr_smer":
@@ -154,9 +108,6 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
             })
 
         sensors_metadata.sort(key=lambda x: x["order"])
-        
-        attrs["primary_sensors"] = primary_sensors
-        attrs["secondary_sensors"] = secondary_sensors
         attrs["sensors"] = sensors_metadata
 
         return attrs
