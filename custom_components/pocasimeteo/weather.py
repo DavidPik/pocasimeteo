@@ -54,7 +54,6 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         """Initialize the weather entity."""
         super().__init__(coordinator)
         self._station_name = station_name
-
         self._attr_name = station_name
         self._attr_unique_id = f"{coordinator.entry.entry_id}_weather"
 
@@ -62,40 +61,40 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
             identifiers={(DOMAIN, coordinator.entry.entry_id)},
             name=station_name,
             manufacturer="PočasíMeteo.cz",
-            model="Meteostanice",
+            model="Meteion-Station",
         )
 
     @property
     def condition(self) -> str | None:
         """Return the current condition based on rain."""
-        srazky = self._get_value("rainintensity")
+        srazky = self._get_value("intenzita_srazek")  # Opraveno na nový klíč
         if srazky is not None and srazky > 0:
             return "rainy"
         return "sunny"
 
     @property
     def native_temperature(self) -> float | None:
-        return self._get_value("teplotavnejsi")
+        return self._get_value("teplota_venkovni")  # Opraveno na nový klíč
 
     @property
     def native_pressure(self) -> float | None:
-        return self._get_value("tlakrel")
+        return self._get_value("tlak_relativni")  # Opraveno na nový klíč
 
     @property
     def humidity(self) -> float | None:
-        return self._get_value("vlhkostvnejsi")
+        return self._get_value("vlhkost_venkovni")  # Opraveno na nový klíč
 
     @property
     def native_wind_speed(self) -> float | None:
-        return self._get_value("vitr")
+        return self._get_value("vitr_rychlost")  # Opraveno na nový klíč
 
     @property
     def wind_bearing(self) -> float | str | None:
-        return self._get_value("vitrsmer")
+        return self._get_value("vitr_smer")  # Opraveno na nový klíč
 
     @property
     def native_precipitation(self) -> float | None:
-        return self._get_value("rainintensity")
+        return self._get_value("intenzita_srazek")  # Opraveno na nový klíč
 
     def _get_value(self, sid: str) -> Any:
         """Helper to get a value from coordinator data safely."""
@@ -105,7 +104,7 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose combined attributes and structural metadata with real entity IDs."""
+        """Expose combined attributes and structural metadata formatted precisely for the custom card."""
         attrs: dict[str, Any] = {}
         sensors_metadata: list[dict[str, Any]] = []
 
@@ -123,27 +122,31 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         if not self.coordinator.data:
             return attrs
 
-        # Načteme si systémový registr entit Home Assistantu
         from homeassistant.helpers import entity_registry as er
         ent_reg = er.async_get(self.hass)
 
         for sid, payload in self.coordinator.data.items():
             val = payload.get("value")
             
-            # Hodnoty v surové podobě pro přímé čtení v kartě (např. teplota_venkovni_value)
+            # Hodnoty doručíme pod čistým českým názvem (např. teplota_venkovni_value)
             attrs[f"{sid}_value"] = val
 
-            # Vyhledáme reálné entity_id v systému podle unique_id integrace
-            # Tímto krokem bezpečně zachytíme prefixy jako sensor.venku_gar632_...
+            # Zpětná kompatibilita pro specifické vnitřní výpočty karty Lovelace (Windrose)
+            if sid == "vitr_smer":
+                attrs["vitr_smer_avg"] = val
+                attrs["vitr_smer_mode"] = val
+                attrs["vitr_smer_var"] = 0.0
+
+            for key, val_attr in payload.get("attributes", {}).items():
+                attrs[f"{sid}_{key.lower()}"] = val_attr
+
             unique_id = f"{self.coordinator.entry.entry_id}_{sid}"
             entity_entry = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
-            
-            # Pokud registr entitu zatím nezná, poskládáme bezpečný fallback
             real_entity_id = entity_entry or f"sensor.{DOMAIN}_{sid}"
 
             sensors_metadata.append({
-                "id": sid,                         # Čisté ID (např. teplota_venkovni)
-                "entity_id": real_entity_id,       # Skutečné ID v systému (např. sensor.venku_gar632_teplota_venkovni)
+                "id": sid,                         # např. teplota_venkovni
+                "entity_id": real_entity_id,       # např. sensor.gar632_teplota_venkovni
                 "type": payload.get("type", "secondary"),
                 "order": payload.get("order", 200)
             })
