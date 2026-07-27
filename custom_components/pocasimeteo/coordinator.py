@@ -60,29 +60,25 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"API request failed: {err}") from err
 
-        # Inicializace čistého úložiště pro metadata (přesunuto na začátek)
         self.station_metadata = {}
 
         if isinstance(raw, list) and len(raw) > 0:
-            # Bezpečné vytažení metadat ze segmentu 0
             meta_payload = raw[0]
             if isinstance(meta_payload, dict):
                 self.station_metadata["lokalita"] = meta_payload.get("LokalitaStanice")
                 if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
-            # Bezpečná extrakce dat měření ze segmentu 1
             if len(raw) > 1 and isinstance(raw[1], dict) and "Datum" in raw[1]:
                 raw = raw[1]
             elif isinstance(raw[0], dict) and "Datum" in raw[0]:
                 raw = raw[0]
             else:
-                raise UpdateFailed("API response structure is valid, but weather data payload was not found at index 0 or 1")
+                raise UpdateFailed("API response data payload structure not recognized")
         
         if not isinstance(raw, dict):
             raise UpdateFailed("Invalid API response format")
 
-        # Nyní bezpečně zapíšeme srážky, mezipaměť už se nepřepíše
         try:
             self.station_metadata["srazky_den"] = float(raw.get("SrazkyDen", 0))
         except (ValueError, TypeError):
@@ -94,11 +90,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         return normalized
 
     def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
-        """Convert API fields into internal structure dynamically based on API response."""
+        """Convert API fields into internal structure using clean Czech keys from const.py."""
         result: dict[str, dict] = {}
         now = datetime.now()
         timestamp_str = now.isoformat()
 
+        # --- Výpočet pětiminutové intenzity srážek ---
         rain_intensity = 0.0
         try:
             current_rain = float(raw.get("SrazkyDen", 0))
@@ -118,10 +115,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self._last_rain_value = current_rain
         self._last_rain_timestamp = now
 
+        # Vstříkneme virtuální klíč intenzity do raw dat
         raw["SrazkyIntenzita"] = rain_intensity
 
-        for api_key, value in raw.items():
-            if value is None or api_key in ["Datum", "SrazkyDen"]:
+        # --- Spárování polí podle const.py ---
+        for sid, meta in SENSOR_DEFINITIONS.items():
+            api_key = meta["api_key"]
+            value = raw.get(api_key)
+
+            if value is None:
                 continue
 
             if isinstance(value, str):
@@ -133,20 +135,40 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 except ValueError:
                     pass
 
-            internal_sid = None
-            for sid, meta in SENSOR_DEFINITIONS.items():
-                if meta.get("api_key") == api_key:
-                    internal_sid = sid
-                    break
+            result[sid] = {
+                "value": value,
+                "api_key": api_key,
+                "type": meta.get("type", "secondary"),
+                "order": meta.get("order", 200),
+                "attributes": {
+                    "timestamp": timestamp_str,
+                },
+            }
 
-            if internal_sid is None:
-                internal_sid = api_key.lower()
-                from .const import get_dynamic_sensor_meta
-                meta = get_dynamic_sensor_meta(api_key)
-            else:
-                meta = SENSOR_DEFINITIONS[internal_sid]
+        # --- Zpracování případných dynamických neznámých čidel ---
+        for api_key, value in raw.items():
+            if value is None or api_key in ["Datum", "SrazkyDen"]:
+                continue
 
-            result[internal_sid] = {
+            # Pokud klíč už v result máme (protože byl v SENSOR_DEFINITIONS), přeskočíme ho
+            already_mapped = any(m.get("api_key") == api_key for m in SENSOR_DEFINITIONS.values())
+            if already_mapped or api_key == "SrazkyIntenzita":
+                continue
+
+            if isinstance(value, str):
+                try:
+                    if "." in value:
+                        value = float(value)
+                    else:
+                        value = int(value)
+                except ValueError:
+                    pass
+
+            from .const import get_dynamic_sensor_meta
+            meta = get_dynamic_sensor_meta(api_key)
+            sid = api_key.lower()
+
+            result[sid] = {
                 "value": value,
                 "api_key": api_key,
                 "type": meta.get("type", "secondary"),
