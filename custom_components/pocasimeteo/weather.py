@@ -105,42 +105,45 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose combined attributes, structural metadata, location, webcam and daily rain."""
+        """Expose combined attributes and structural metadata with real entity IDs."""
         attrs: dict[str, Any] = {}
         sensors_metadata: list[dict[str, Any]] = []
 
-        # Načtení metadat z koordinátoru
         metadata = getattr(self.coordinator, "station_metadata", {})
-        attrs["lokalita_stanice"] = metadata.get("lokalita") or self.coordinator.entry.data.get(CONF_STATION, "Hostivice")
+        attrs["lokalita_stanice"] = metadata.get("lokalita") or self._station_name
         attrs["url_webkamera"] = metadata.get("webcamera_url") or ""
-        
-        # Klíčové identifikátory pro frontendovou kartu
         attrs["station_name"] = self._station_name
         attrs["config_entry_id"] = self.coordinator.entry.entry_id
-
-        # Předání nastaveného intervalu aktualizace frontendové kartě
         attrs["update_interval"] = self.coordinator.entry.options.get(CONF_UPDATE_INTERVAL, 5)
         
         import datetime
         attrs["timestamp"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Zápis celkového denního úhrnu srážek do systémových atributů
-        daily_rain = metadata.get("srazky_den", 0.0)
-        attrs["srazky_den"] = daily_rain
-        attrs["SrazkyDen_value"] = daily_rain  # Fallback pro starší verzi JS karty
+        attrs["srazky_den"] = metadata.get("srazky_den", 0.0)
 
         if not self.coordinator.data:
             return attrs
 
-        # Procházíme všechny aktivní senzory z koordinátoru
-        for sid, payload in self.coordinator.data.items():
-            attrs[f"{sid}_value"] = payload.get("value")
+        # Načteme si systémový registr entit Home Assistantu
+        from homeassistant.helpers import entity_registry as er
+        ent_reg = er.async_get(self.hass)
 
-            for key, val in payload.get("attributes", {}).items():
-                attrs[f"{sid}_{key}"] = val
+        for sid, payload in self.coordinator.data.items():
+            val = payload.get("value")
+            
+            # Hodnoty v surové podobě pro přímé čtení v kartě (např. teplota_venkovni_value)
+            attrs[f"{sid}_value"] = val
+
+            # Vyhledáme reálné entity_id v systému podle unique_id integrace
+            # Tímto krokem bezpečně zachytíme prefixy jako sensor.venku_gar632_...
+            unique_id = f"{self.coordinator.entry.entry_id}_{sid}"
+            entity_entry = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
+            
+            # Pokud registr entitu zatím nezná, poskládáme bezpečný fallback
+            real_entity_id = entity_entry or f"sensor.{DOMAIN}_{sid}"
 
             sensors_metadata.append({
-                "id": sid,
+                "id": sid,                         # Čisté ID (např. teplota_venkovni)
+                "entity_id": real_entity_id,       # Skutečné ID v systému (např. sensor.venku_gar632_teplota_venkovni)
                 "type": payload.get("type", "secondary"),
                 "order": payload.get("order", 200)
             })
