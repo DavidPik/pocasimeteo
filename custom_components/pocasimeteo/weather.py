@@ -12,7 +12,6 @@ from homeassistant.components.weather import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-# OPRAVA: Přidán chybějící import CoordinatorEntity z update_coordinator pomocníka
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.const import (
@@ -38,12 +37,11 @@ async def async_setup_entry(
     coordinator: PocasimeteoDataUpdateCoordinator = store["coordinator"]
 
     station_name = entry.data.get(CONF_STATION, "Meteostanice")
-
     async_add_entities([PocasimeteoWeather(coordinator, station_name)])
 
 
 class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], WeatherEntity):
-    """Representation of PočasíMeteo weather summary using CoordinatorEntity."""
+    """Representation of PočasíMeteo weather summary."""
 
     _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_native_pressure_unit = UnitOfPressure.HPA
@@ -67,15 +65,11 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def condition(self) -> str | None:
-        """Return the current condition based on rain."""
-        srazky = self._get_value("intenzita_srazek")
-        if srazky is not None and srazky > 0:
-            return "rainy"
-        return "sunny"
+        return self._get_value("intenzita_srazek")
 
     @property
     def native_temperature(self) -> float | None:
-        return self._get_value("teplota_venkovni")
+        return self._get_value("teplota_vnejsi")
 
     @property
     def native_pressure(self) -> float | None:
@@ -83,7 +77,7 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def humidity(self) -> float | None:
-        return self._get_value("vlhkost_venkovni")
+        return self._get_value("vlhkost_vnejsi")
 
     @property
     def native_wind_speed(self) -> float | None:
@@ -98,19 +92,17 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         return self._get_value("intenzita_srazek")
 
     def _get_value(self, sid: str) -> Any:
-        """Helper to get a value from coordinator data safely."""
         if not self.coordinator.data or sid not in self.coordinator.data:
             return None
         return self.coordinator.data[sid].get("value")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose combined attributes and structural metadata formatted precisely for the custom card."""
+        """Expose clean structural metadata for frontend card."""
         attrs: dict[str, Any] = {}
-        sensors_metadata: list[dict[str, Any]] = []
         
-        primary_sensors: list[str] = []
-        secondary_sensors: list[str] = []
+        primary_entities: list[dict[str, Any]] = []
+        secondary_entities: list[dict[str, Any]] = []
 
         metadata = getattr(self.coordinator, "station_metadata", {})
         attrs["lokalita_stanice"] = metadata.get("lokalita") or self._station_name
@@ -129,34 +121,34 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         from homeassistant.helpers import entity_registry as er
         ent_reg = er.async_get(self.hass)
 
-        for sid, payload in self.coordinator.data.items():
+        # Procházíme data seřazená podle parametru order
+        sorted_sensors = sorted(
+            self.coordinator.data.items(),
+            key=lambda x: x[1].get("order", 200)
+        )
+
+        for sid, payload in sorted_sensors:
             val = payload.get("value")
             
+            # PLNĚNÍ BODU B: Atributy mají jednotný tvar (teplota_vnejsi_value, teplota_vnejsi_min)
             attrs[f"{sid}_value"] = val
-
-            if sid == "vitr_smer":
-                attrs["vitr_smer_avg"] = val
-                attrs["vitr_smer_mode"] = val
-                attrs["vitr_smer_var"] = 0.0
-
             for key, val_attr in payload.get("attributes", {}).items():
                 attrs[f"{sid}_{key.lower()}"] = val_attr
 
+            # Najdeme skutečné entity_id v systému (včetně všech prefixů oblasti jako sensor.venku_...)
             unique_id = f"{self.coordinator.entry.entry_id}_{sid}"
             entity_entry = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
             real_entity_id = entity_entry or f"sensor.{DOMAIN}_{sid}"
 
-            sensors_metadata.append({
-                "id": sid,
-                "entity_id": real_entity_id,
-                "type": payload.get("type", "secondary"),
-                "order": payload.get("order", 200)
-            })
+            # PLNĚNÍ BODU C, D: Rozřadíme entity rovnou do polí podle typu
+            s_type = payload.get("type", "secondary")
+            if s_type == "primary":
+                primary_entities.append(real_entity_id)
+            else:
+                secondary_entities.append(real_entity_id)
 
-        sensors_metadata.sort(key=lambda x: x["order"])
-        
-        attrs["primary_sensors"] = primary_sensors
-        attrs["secondary_sensors"] = secondary_sensors
-        attrs["sensors"] = sensors_metadata
+        # Publikujeme pole skutečných systémových jmen entit připravených pro kartu Lovelace
+        attrs["primary_sensors"] = primary_entities
+        attrs["secondary_sensors"] = secondary_entities
 
         return attrs
