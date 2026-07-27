@@ -21,7 +21,8 @@ from homeassistant.const import (
     UnitOfPrecipitationDepth,
 )
 
-from .const import DOMAIN, CONF_STATION
+# OPRAVA: Přidán chybějící import CONF_UPDATE_INTERVAL z const.py
+from .const import DOMAIN, CONF_STATION, CONF_UPDATE_INTERVAL
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,34 +68,34 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
     @property
     def condition(self) -> str | None:
         """Return the current condition based on rain."""
-        srazky = self._get_value("intenzita_srazek")  # Opraveno na nový klíč
+        srazky = self._get_value("intenzita_srazek")
         if srazky is not None and srazky > 0:
             return "rainy"
         return "sunny"
 
     @property
     def native_temperature(self) -> float | None:
-        return self._get_value("teplota_venkovni")  # Opraveno na nový klíč
+        return self._get_value("teplota_venkovni")
 
     @property
     def native_pressure(self) -> float | None:
-        return self._get_value("tlak_relativni")  # Opraveno na nový klíč
+        return self._get_value("tlak_relativni")
 
     @property
     def humidity(self) -> float | None:
-        return self._get_value("vlhkost_venkovni")  # Opraveno na nový klíč
+        return self._get_value("vlhkost_venkovni")
 
     @property
     def native_wind_speed(self) -> float | None:
-        return self._get_value("vitr_rychlost")  # Opraveno na nový klíč
+        return self._get_value("vitr_rychlost")
 
     @property
     def wind_bearing(self) -> float | str | None:
-        return self._get_value("vitr_smer")  # Opraveno na nový klíč
+        return self._get_value("vitr_smer")
 
     @property
     def native_precipitation(self) -> float | None:
-        return self._get_value("intenzita_srazek")  # Opraveno na nový klíč
+        return self._get_value("intenzita_srazek")
 
     def _get_value(self, sid: str) -> Any:
         """Helper to get a value from coordinator data safely."""
@@ -107,6 +108,9 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         """Expose combined attributes and structural metadata formatted precisely for the custom card."""
         attrs: dict[str, Any] = {}
         sensors_metadata: list[dict[str, Any]] = []
+        
+        primary_sensors: list[str] = []
+        secondary_sensors: list[str] = []
 
         metadata = getattr(self.coordinator, "station_metadata", {})
         attrs["lokalita_stanice"] = metadata.get("lokalita") or self._station_name
@@ -128,10 +132,8 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         for sid, payload in self.coordinator.data.items():
             val = payload.get("value")
             
-            # Hodnoty doručíme pod čistým českým názvem (např. teplota_venkovni_value)
             attrs[f"{sid}_value"] = val
 
-            # Zpětná kompatibilita pro specifické vnitřní výpočty karty Lovelace (Windrose)
             if sid == "vitr_smer":
                 attrs["vitr_smer_avg"] = val
                 attrs["vitr_smer_mode"] = val
@@ -145,13 +147,16 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
             real_entity_id = entity_entry or f"sensor.{DOMAIN}_{sid}"
 
             sensors_metadata.append({
-                "id": sid,                         # např. teplota_venkovni
-                "entity_id": real_entity_id,       # např. sensor.gar632_teplota_venkovni
+                "id": sid,
+                "entity_id": real_entity_id,
                 "type": payload.get("type", "secondary"),
                 "order": payload.get("order", 200)
             })
 
         sensors_metadata.sort(key=lambda x: x["order"])
+        
+        attrs["primary_sensors"] = primary_sensors
+        attrs["secondary_sensors"] = secondary_sensors
         attrs["sensors"] = sensors_metadata
 
         return attrs
