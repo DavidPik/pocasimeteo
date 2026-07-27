@@ -98,11 +98,11 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose clean structural metadata for frontend card."""
+        """Expose combined attributes and structural metadata with real generated entity IDs."""
         attrs: dict[str, Any] = {}
         
-        primary_entities: list[dict[str, Any]] = []
-        secondary_entities: list[dict[str, Any]] = []
+        primary_entities: list[str] = []
+        secondary_entities: list[str] = []
 
         metadata = getattr(self.coordinator, "station_metadata", {})
         attrs["lokalita_stanice"] = metadata.get("lokalita") or self._station_name
@@ -118,10 +118,18 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         if not self.coordinator.data:
             return attrs
 
-        from homeassistant.helpers import entity_registry as er
+        # Načteme si systémový registr entit a zařízení Home Assistantu
+        from homeassistant.helpers import entity_registry as er, device_registry as dr
         ent_reg = er.async_get(self.hass)
+        dev_reg = dr.async_get(self.hass)
 
-        # Procházíme data seřazená podle parametru order
+        # Vyhledáme naše fyzické zařízení v systému
+        device = dev_reg.async_get_device(identifiers={(DOMAIN, self.coordinator.entry.entry_id)})
+        device_id = device.id if device else None
+
+        # Získáme seznam všech entit přiřazených k tomuto zařízení
+        device_entities = er.async_entries_for_device(ent_reg, device_id) if device_id else []
+
         sorted_sensors = sorted(
             self.coordinator.data.items(),
             key=lambda x: x[1].get("order", 200)
@@ -130,24 +138,31 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         for sid, payload in sorted_sensors:
             val = payload.get("value")
             
-            # PLNĚNÍ BODU B: Atributy mají jednotný tvar (teplota_vnejsi_value, teplota_vnejsi_min)
+            # Hodnoty doručíme pod čistým českým názvem (teplota_vnejsi_value)
             attrs[f"{sid}_value"] = val
             for key, val_attr in payload.get("attributes", {}).items():
                 attrs[f"{sid}_{key.lower()}"] = val_attr
 
-            # Najdeme skutečné entity_id v systému (včetně všech prefixů oblasti jako sensor.venku_...)
-            unique_id = f"{self.coordinator.entry.entry_id}_{sid}"
-            entity_entry = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
-            real_entity_id = entity_entry or f"sensor.{DOMAIN}_{sid}"
+            if sid == "vitr_smer":
+                attrs["vitr_smer_avg"] = val
+                attrs["vitr_smer_mode"] = val
+                attrs["vitr_smer_var"] = 0.0
 
-            # PLNĚNÍ BODU C, D: Rozřadíme entity rovnou do polí podle typu
+            # NEPRŮSTŘELNÉ VYHLEDÁNÍ: Najdeme skutečné entity_id patřící k tomuto senzorovému ID v zařízení
+            real_entity_id = f"sensor.{DOMAIN}_{sid}"  # fallback
+            for entry in device_entities:
+                # unique_id u senzorů končí naším sid (např. ..._teplota_vnejsi)
+                if entry.domain == "sensor" and entry.unique_id.endswith(f"_{sid}"):
+                    real_entity_id = entry.entity_id
+                    break
+
             s_type = payload.get("type", "secondary")
             if s_type == "primary":
                 primary_entities.append(real_entity_id)
             else:
                 secondary_entities.append(real_entity_id)
 
-        # Publikujeme pole skutečných systémových jmen entit připravených pro kartu Lovelace
+        # Předáme kartě pole se skutečnými, živými systémovými jmény (např. sensor.gar632_teplota_venkovni)
         attrs["primary_sensors"] = primary_entities
         attrs["secondary_sensors"] = secondary_entities
 
