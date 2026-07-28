@@ -98,11 +98,13 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose combined attributes and structural metadata with real generated entity IDs."""
+        """Expose combined attributes and structural metadata formatted precisely for the custom card."""
         attrs: dict[str, Any] = {}
         
+        # DEFINICE PROMĚNNÝCH NA ZAČÁTKU METODY:
         primary_entities: list[str] = []
         secondary_entities: list[str] = []
+        sensors_metadata: list[dict[str, Any]] = []
 
         metadata = getattr(self.coordinator, "station_metadata", {})
         attrs["lokalita_stanice"] = metadata.get("lokalita") or self._station_name
@@ -118,16 +120,12 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         if not self.coordinator.data:
             return attrs
 
-        # Načteme si systémový registr entit a zařízení Home Assistantu
         from homeassistant.helpers import entity_registry as er, device_registry as dr
         ent_reg = er.async_get(self.hass)
         dev_reg = dr.async_get(self.hass)
 
-        # Vyhledáme naše fyzické zařízení v systému
         device = dev_reg.async_get_device(identifiers={(DOMAIN, self.coordinator.entry.entry_id)})
         device_id = device.id if device else None
-
-        # Získáme seznam všech entit přiřazených k tomuto zařízení
         device_entities = er.async_entries_for_device(ent_reg, device_id) if device_id else []
 
         sorted_sensors = sorted(
@@ -138,7 +136,6 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         for sid, payload in sorted_sensors:
             val = payload.get("value")
             
-            # Hodnoty doručíme pod čistým českým názvem (teplota_vnejsi_value)
             attrs[f"{sid}_value"] = val
             for key, val_attr in payload.get("attributes", {}).items():
                 attrs[f"{sid}_{key.lower()}"] = val_attr
@@ -148,10 +145,8 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
                 attrs["vitr_smer_mode"] = val
                 attrs["vitr_smer_var"] = 0.0
 
-            # NEPRŮSTŘELNÉ VYHLEDÁNÍ: Najdeme skutečné entity_id patřící k tomuto senzorovému ID v zařízení
-            real_entity_id = f"sensor.{DOMAIN}_{sid}"  # fallback
+            real_entity_id = f"sensor.{DOMAIN}_{sid}"
             for entry in device_entities:
-                # unique_id u senzorů končí naším sid (např. ..._teplota_vnejsi)
                 if entry.domain == "sensor" and entry.unique_id.endswith(f"_{sid}"):
                     real_entity_id = entry.entity_id
                     break
@@ -163,17 +158,16 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
                 secondary_entities.append(real_entity_id)
 
             sensors_metadata.append({
-                "id": sid,                         # např. teplota_venkovni
-                "entity_id": real_entity_id,       # např. sensor.gar632_teplota_venkovni
+                "id": sid,
+                "entity_id": real_entity_id,
                 "type": s_type,
                 "order": payload.get("order", 200)
             })
 
         sensors_metadata.sort(key=lambda x: x["order"])
         
-        # DEFINITIVNÍ OPRAVA: Publikujeme hotová pole pro všechny verze karty!
         attrs["primary_sensors"] = primary_entities
         attrs["secondary_sensors"] = secondary_entities
-        attrs["sensors"] = sensors_metadata  # <--- TENTO ŘÁDEK CHYBĚL
+        attrs["sensors"] = sensors_metadata
 
         return attrs
