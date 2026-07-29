@@ -42,6 +42,7 @@ async def async_setup_entry(
 
 class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], WeatherEntity):
     """Representation of PočasíMeteo weather summary."""
+    _attr_should_poll = False
 
     _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_native_pressure_unit = UnitOfPressure.HPA
