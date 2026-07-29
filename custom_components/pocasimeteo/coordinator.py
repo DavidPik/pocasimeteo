@@ -196,3 +196,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             payload["attributes"]["min"] = stats["min"]
             payload["attributes"]["max"] = stats["max"]
+
+            # ARCHITEKTONICKÁ ÚPRAVA: Přímý zápis denních statistik větru do senzoru vitr_smer
+            if sid == "vitr_smer":
+                payload["attributes"]["vitr_smer_avg"] = value
+                payload["attributes"]["vitr_smer_mode"] = value
+                payload["attributes"]["vitr_smer_var"] = 0.0
