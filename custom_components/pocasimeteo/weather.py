@@ -84,6 +84,10 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         return self._get_value("vitr_rychlost")
 
     @property
+    def native_wind_gust_speed(self) -> float | None;
+        return self._get_value("vitr_narazy")
+
+    @property
     def wind_bearing(self) -> float | str | None:
         return self._get_value("vitr_smer")
 
