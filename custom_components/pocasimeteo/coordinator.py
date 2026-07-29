@@ -12,6 +12,9 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 from homeassistant.helpers import aiohttp_client
+from homeassistant.components.recorder import get_instance
+from homeassistant.components.recorder.models import States
+from sqlalchemy import select
 
 from .const import (
     DOMAIN,
@@ -23,9 +26,61 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-
 class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     """Coordinator responsible for fetching and normalizing PočasíMeteo data."""
+
+    async def _history_exists(self, entity_id: str, ts: datetime) -> bool:
+        """Check if recorder already contains a state for given timestamp."""
+        rec = get_instance(self.hass)
+        with rec.get_session() as session:
+            q = select(States).where(
+                States.entity_id == entity_id,
+                States.last_changed == ts
+            )
+            return session.execute(q).first() is not None
+
+    async def _insert_history_point(self, entity_id: str, value, ts: datetime):
+        """Insert a historical state into recorder DB."""
+        rec = get_instance(self.hass)
+
+        def _insert():
+            with rec.get_session() as session:
+                row = States(
+                    entity_id=entity_id,
+                    state=str(value),
+                    last_changed=ts,
+                    last_updated=ts,
+                    attributes="{}"
+                )
+                session.add(row)
+                session.commit()
+
+        await rec.async_add_executor_job(_insert)
+
+    async def _import_history(self, measurements: list[dict]):
+        """Import full 5-minute history from API into recorder."""
+        for m in measurements:
+            ts_raw = m.get("Datum")
+            if not ts_raw:
+                continue
+
+            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+
+            # Projdeme všechny veličiny
+            for key, value in m.items():
+                if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
+                    continue
+
+                entity_id = f"sensor.pocasimeteo_{key.lower()}"
+
+                # Konverze hodnoty
+                v = self._to_float(value) if key in self.FLOAT_KEYS else value
+                if v is None:
+                    continue
+
+                # Pokud záznam neexistuje → vložíme
+                if not await self._history_exists(entity_id, ts):
+                    await self._insert_history_point(entity_id, v, ts)
 
     def __init__(self, hass: HomeAssistant, entry):
         self.hass = hass
@@ -114,6 +169,24 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self._last_rain_value = current_rain
         self._last_rain_timestamp = now
         raw["SrazkyIntenzita"] = rain_intensity
+
+        # --- Import historie měření z API ---
+        history_payload = None
+
+        # API někdy posílá historii v poli "DoplCidlaJson"
+        if isinstance(raw.get("DoplCidlaJson"), dict):
+            history_payload = raw["DoplCidlaJson"].get("Historie")
+
+        # API někdy posílá historii přímo v poli "Historie"
+        if history_payload is None and isinstance(raw.get("Historie"), list):
+            history_payload = raw["Historie"]
+
+        # Pokud máme platnou historii → doplníme ji do Recorderu
+        if isinstance(history_payload, list) and len(history_payload) > 0:
+            try:
+                await self._import_history(history_payload)
+            except Exception as hist_err:
+                _LOGGER.warning(f"Import historie PočasíMeteo selhal: {hist_err}")
 
         normalized = self._normalize_data(raw)
         self._update_daily_stats(normalized)
