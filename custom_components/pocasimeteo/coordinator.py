@@ -177,17 +177,25 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         return result
 
     def _update_daily_stats(self, data: dict[str, dict]):
-        """Compute min/max values securely using Czech IDs."""
+        """Compute min/max and incremental daily wind statistics securely using Czech IDs."""
         today = date.today()
 
+        # Pokud nastal nový den, kompletně resetujeme denní paměť statistik
         if "_date" not in self._daily_stats or self._daily_stats["_date"] != today:
-            self._daily_stats = {"_date": today}
+            self._daily_stats = {
+                "_date": today,
+                "vitr_smer_angles": [], # Pole pro ukládání historie úhlů pro přesný modus
+                "vitr_smer_sin_sum": 0.0,
+                "vitr_smer_cos_sum": 0.0,
+                "vitr_smer_count": 0
+            }
 
         for sid, payload in data.items():
             value = payload["value"]
             if not isinstance(value, (int, float)):
                 continue
 
+            # Standardní celoplošný denní min/max pro všechny číselné senzory
             stats = self._daily_stats.setdefault(sid, {"min": value, "max": value})
             if value < stats["min"]:
                 stats["min"] = value
@@ -197,8 +205,40 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             payload["attributes"]["min"] = stats["min"]
             payload["attributes"]["max"] = stats["max"]
 
-            # ARCHITEKTONICKÁ ÚPRAVA: Přímý zápis denních statistik větru do senzoru vitr_smer
+            # SPECIÁLNÍ UKÁZKOVÁ INKREMENTÁLNÍ MATEMATIKA PRO SMĚR VĚTRU
             if sid == "vitr_smer":
-                payload["attributes"]["vitr_smer_avg"] = value
-                payload["attributes"]["vitr_smer_mode"] = value
-                payload["attributes"]["vitr_smer_var"] = 0.0
+                import math
+                from collections import Counter
+
+                # 1. Výpočet průměru (Vektorový průměr úhlů pomocí sinu a kosinu)
+                rad = math.radians(value)
+                self._daily_stats["vitr_smer_sin_sum"] += math.sin(rad)
+                self._daily_stats["vitr_smer_cos_sum"] += math.cos(rad)
+                self._daily_stats["vitr_smer_count"] += 1
+
+                avg_sin = self._daily_stats["vitr_smer_sin_sum"] / self._daily_stats["vitr_smer_count"]
+                avg_cos = self._daily_stats["vitr_smer_cos_sum"] / self._daily_stats["vitr_smer_count"]
+                
+                avg_deg = math.degrees(math.atan2(avg_sin, avg_cos))
+                if avg_deg < 0:
+                    avg_deg += 360.0
+                
+                # 2. Výpočet modusu (Nejčastější hodnota za dnešek zaokrouhlená na světové směry)
+                self._daily_stats["vitr_smer_angles"].append(value)
+                # Zaokrouhlíme na nejbližších 22.5 stupně pro stabilní určení dominantního směru
+                rounded_angles = [round(a / 22.5) * 22.5 % 360 for a in self._daily_stats["vitr_smer_angles"]]
+                occurence_count = Counter(rounded_angles)
+                mode_deg = occurence_count.most_common(1)[0][0]
+
+                # 3. Výpočet rozptylu variance (Kruhová směrodatná odchylka)
+                # Vzorec: R = sqrt(avg_sin^2 + avg_cos^2). Rozptyl = sqrt(-2 * ln(R)) v radiánech.
+                r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
+                if r_vector > 0.001 and r_vector < 1.0:
+                    var_deg = math.degrees(math.sqrt(-2.0 * math.log(r_vector)))
+                else:
+                    var_deg = 0.0
+
+                # Zápis hotových denních statistik přímo do atributů senzoru pro Lovelace kartu
+                payload["attributes"]["vitr_smer_avg"] = round(avg_deg, 1)
+                payload["attributes"]["vitr_smer_mode"] = round(mode_deg, 1)
+                payload["attributes"]["vitr_smer_var"] = round(min(var_deg, 180.0), 1)
