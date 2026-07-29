@@ -98,12 +98,8 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Expose combined attributes and structural metadata formatted precisely for the custom card."""
+        """Expose basic summary metadata and clean structural sensors array for the card."""
         attrs: dict[str, Any] = {}
-        
-        # DEFINICE PROMĚNNÝCH NA ZAČÁTKU METODY:
-        primary_entities: list[str] = []
-        secondary_entities: list[str] = []
         sensors_metadata: list[dict[str, Any]] = []
 
         metadata = getattr(self.coordinator, "station_metadata", {})
@@ -134,40 +130,21 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         )
 
         for sid, payload in sorted_sensors:
-            val = payload.get("value")
-            
-            attrs[f"{sid}_value"] = val
-            for key, val_attr in payload.get("attributes", {}).items():
-                attrs[f"{sid}_{key.lower()}"] = val_attr
-
-            if sid == "vitr_smer":
-                attrs["vitr_smer_avg"] = val
-                attrs["vitr_smer_mode"] = val
-                attrs["vitr_smer_var"] = 0.0
-
             real_entity_id = f"sensor.{DOMAIN}_{sid}"
             for entry in device_entities:
                 if entry.domain == "sensor" and entry.unique_id.endswith(f"_{sid}"):
                     real_entity_id = entry.entity_id
                     break
 
-            s_type = payload.get("type", "secondary")
-            if s_type == "primary":
-                primary_entities.append(real_entity_id)
-            else:
-                secondary_entities.append(real_entity_id)
-
+            # Generujeme čisté pole struktury pro naši zjednodušenou Lovelace kartu
             sensors_metadata.append({
                 "id": sid,
                 "entity_id": real_entity_id,
-                "type": s_type,
+                "type": payload.get("type", "secondary"),
                 "order": payload.get("order", 200)
             })
 
         sensors_metadata.sort(key=lambda x: x["order"])
-        
-        attrs["primary_sensors"] = primary_entities
-        attrs["secondary_sensors"] = secondary_entities
         attrs["sensors"] = sensors_metadata
 
         return attrs
