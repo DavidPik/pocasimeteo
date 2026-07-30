@@ -82,6 +82,20 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if not await self._history_exists(entity_id, ts):
                     await self._insert_history_point(entity_id, v, ts)
 
+                # --- Doplnění historie do denních statistik pro vitr_smer ---
+                if "vitr_smer" in key.lower():
+                    import math
+                    angle = float(v)
+
+                    # 1. Uložit úhel do seznamu pro modus
+                    self._daily_stats["vitr_smer_angles"].append(angle)
+
+                    # 2. Přičíst do vektorového průměru
+                    rad = math.radians(angle)
+                    self._daily_stats["vitr_smer_sin_sum"] += math.sin(rad)
+                    self._daily_stats["vitr_smer_cos_sum"] += math.cos(rad)
+                    self._daily_stats["vitr_smer_count"] += 1
+
     def __init__(self, hass: HomeAssistant, entry):
         self.hass = hass
         self.entry = entry
