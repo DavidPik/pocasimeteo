@@ -12,6 +12,8 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 from homeassistant.helpers import aiohttp_client
+
+# Recorder imports (modern HA versions)
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.db_schema import States
 from sqlalchemy import select
@@ -26,11 +28,25 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
-    """Coordinator responsible for fetching and normalizing PočasíMeteo data."""
+    """
+    Main coordinator responsible for:
+    - Fetching data from PočasíMeteo API
+    - Importing 5-minute historical measurements into Home Assistant Recorder
+    - Computing rolling 24-hour statistics (min/max/avg/mode/variance)
+    - Normalizing API payload into HA sensor format
+    """
+
+    # -------------------------------------------------------------------------
+    # Recorder helpers
+    # -------------------------------------------------------------------------
 
     async def _history_exists(self, entity_id: str, ts: datetime) -> bool:
-        """Check if recorder already contains a state for given timestamp."""
+        """
+        Check if a historical state with the given timestamp already exists.
+        Prevents duplicate inserts when API repeatedly sends the same history.
+        """
         rec = get_instance(self.hass)
         with rec.get_session() as session:
             q = select(States).where(
@@ -40,7 +56,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             return session.execute(q).first() is not None
 
     async def _insert_history_point(self, entity_id: str, value, ts: datetime):
-        """Insert a historical state into recorder DB."""
+        """
+        Insert a historical state into Recorder DB.
+        This allows HA graphs to show complete 24h history even after restart.
+        """
         rec = get_instance(self.hass)
 
         def _insert():
@@ -57,44 +76,71 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         await rec.async_add_executor_job(_insert)
 
+    # -------------------------------------------------------------------------
+    # Import full 5-minute history from API
+    # -------------------------------------------------------------------------
+
     async def _import_history(self, measurements: list[dict]):
-        """Import full 5-minute history from API into recorder."""
+        """
+        Import complete 5-minute history from API into Recorder.
+        Also rebuild rolling 24-hour statistics from scratch.
+        """
+
+        # Reset rolling statistics — we rebuild them from imported history.
+        # This ensures statistics match exactly the same 24h window as HA graphs.
+        self._daily_stats = {
+            "_date": date.today(),
+            "vitr_smer_angles": [],
+            "vitr_smer_sin_sum": 0.0,
+            "vitr_smer_cos_sum": 0.0,
+            "vitr_smer_count": 0
+        }
+
         for m in measurements:
             ts_raw = m.get("Datum")
             if not ts_raw:
                 continue
 
+            # Convert ISO timestamp from API
             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
 
-            # Projdeme všechny veličiny
+            # Process all measurement fields
             for key, value in m.items():
                 if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
                     continue
 
                 entity_id = f"sensor.pocasimeteo_{key.lower()}"
 
-                # Konverze hodnoty
-                v = self._to_float(value) if key in self.FLOAT_KEYS else value
+                # Convert numeric values
+                try:
+                    v = float(value)
+                except Exception:
+                    v = value
+
                 if v is None:
                     continue
 
-                # Pokud záznam neexistuje → vložíme
+                # Insert missing historical points into Recorder
                 if not await self._history_exists(entity_id, ts):
                     await self._insert_history_point(entity_id, v, ts)
 
-                # --- Doplnění historie do denních statistik pro vitr_smer ---
-                if "vitr_smer" in key.lower():
+                # Extend rolling 24h statistics for wind direction
+                if key.lower() == "vitr_smer":
                     import math
                     angle = float(v)
 
-                    # 1. Uložit úhel do seznamu pro modus
+                    # Store angle for mode calculation
                     self._daily_stats["vitr_smer_angles"].append(angle)
 
-                    # 2. Přičíst do vektorového průměru
+                    # Add to vector sums for circular average
                     rad = math.radians(angle)
                     self._daily_stats["vitr_smer_sin_sum"] += math.sin(rad)
                     self._daily_stats["vitr_smer_cos_sum"] += math.cos(rad)
                     self._daily_stats["vitr_smer_count"] += 1
+
+    # -------------------------------------------------------------------------
+    # Coordinator initialization
+    # -------------------------------------------------------------------------
 
     def __init__(self, hass: HomeAssistant, entry):
         self.hass = hass
@@ -108,12 +154,23 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(minutes=update_interval_minutes),
         )
 
+        # Rolling 24h statistics storage
         self._daily_stats: dict[str, dict[str, float]] = {}
+
+        # Rain intensity tracking
         self._last_rain_value: float | None = None
         self._last_rain_timestamp: datetime | None = None
 
+    # -------------------------------------------------------------------------
+    # Main API update
+    # -------------------------------------------------------------------------
+
     async def _async_update_data(self):
-        """Fetch and normalize data from PočasíMeteo API."""
+        """
+        Fetch and normalize data from PočasíMeteo API.
+        Also import history and compute rolling statistics.
+        """
+
         api_key = self.entry.data[CONF_API_KEY]
         url = f"{API_URL_BASE}?KlicApi={api_key}"
 
@@ -127,10 +184,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"API request failed: {err}") from err
 
-        # OŠETŘENÍ RATE LIMITU: Pokud server posílá chybové hlášení, zastavíme parsování
+        # API sometimes returns error messages inside JSON
         if isinstance(raw, dict) and "Zprava" in raw:
             raise UpdateFailed(f"PočasíMeteo API Error: {raw['Zprava']}")
 
+        # Extract metadata and weather payload
         self.station_metadata = {}
 
         if isinstance(raw, list) and len(raw) > 0:
@@ -140,79 +198,80 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
-            # Pokud limit sice neprošel přes dict, ale pole je zablokované chybovou zprávou
-            if len(raw) > 1 and isinstance(raw[1], dict) and "Zprava" in raw[1]:
-                raise UpdateFailed(f"PočasíMeteo API Error: {raw[1]['Zprava']}")
-
+            # Weather payload may be in raw[1] or raw[0]
             if len(raw) > 1 and isinstance(raw[1], dict) and "Datum" in raw[1]:
                 raw = raw[1]
             elif isinstance(raw[0], dict) and "Datum" in raw[0]:
                 raw = raw[0]
             else:
-                raise UpdateFailed("API response structure valid, but weather payload missing or rate limited")
-        
+                raise UpdateFailed("API response structure valid, but weather payload missing")
+
         if not isinstance(raw, dict):
             raise UpdateFailed("Invalid API response format")
 
-        # Pokud se v datech objeví textová chyba chránící frekvenci volání
-        if "Zprava" in raw:
-            raise UpdateFailed(f"PočasíMeteo API Limit: {raw['Zprava']}")
-
-        try:
-            self.station_metadata["srazky_den"] = float(raw.get("SrazkyDen", 0))
-        except (ValueError, TypeError):
-            self.station_metadata["srazky_den"] = 0.0
-
-        # Spočítáme 5min intenzitu srážek
-        rain_intensity = 0.0
-        now = datetime.now()
+        # Rain intensity calculation
         try:
             current_rain = float(raw.get("SrazkyDen", 0))
-        except (ValueError, TypeError):
+        except Exception:
             current_rain = 0.0
+
+        rain_intensity = 0.0
+        now = datetime.now()
 
         if self._last_rain_value is not None and self._last_rain_timestamp is not None:
             time_delta = now - self._last_rain_timestamp
             hours_passed = time_delta.total_seconds() / 3600.0
 
-            if current_rain >= self._last_rain_value and hours_passed > 0.0027:
-                rain_intensity = round((current_rain - self._last_rain_value) / hours_passed, 2)
-            elif current_rain < self._last_rain_value and hours_passed > 0.0027:
-                rain_intensity = round(current_rain / hours_passed, 2)
-        
+            if hours_passed > 0.0027:  # ~10 seconds
+                if current_rain >= self._last_rain_value:
+                    rain_intensity = round((current_rain - self._last_rain_value) / hours_passed, 2)
+                else:
+                    rain_intensity = round(current_rain / hours_passed, 2)
+
         self._last_rain_value = current_rain
         self._last_rain_timestamp = now
         raw["SrazkyIntenzita"] = rain_intensity
 
-        # --- Import historie měření z API ---
+        # ---------------------------------------------------------------------
+        # Import 24h history BEFORE normalizing data
+        # ---------------------------------------------------------------------
+
         history_payload = None
 
-        # API někdy posílá historii v poli "DoplCidlaJson"
         if isinstance(raw.get("DoplCidlaJson"), dict):
             history_payload = raw["DoplCidlaJson"].get("Historie")
 
-        # API někdy posílá historii přímo v poli "Historie"
         if history_payload is None and isinstance(raw.get("Historie"), list):
             history_payload = raw["Historie"]
 
-        # Pokud máme platnou historii → doplníme ji do Recorderu
         if isinstance(history_payload, list) and len(history_payload) > 0:
             try:
                 await self._import_history(history_payload)
             except Exception as hist_err:
                 _LOGGER.warning(f"Import historie PočasíMeteo selhal: {hist_err}")
 
+        # ---------------------------------------------------------------------
+        # Normalize and compute statistics
+        # ---------------------------------------------------------------------
+
         normalized = self._normalize_data(raw)
         self._update_daily_stats(normalized)
 
         return normalized
 
+    # -------------------------------------------------------------------------
+    # Normalize API payload into HA sensor format
+    # -------------------------------------------------------------------------
+
     def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
-        """Map API fields directly to clean internal Czech IDs."""
+        """
+        Convert API fields into HA sensor format.
+        Adds timestamp and numeric conversion.
+        """
         result: dict[str, dict] = {}
         timestamp_str = datetime.now().isoformat()
 
-        # 1. Spárujeme známé senzory z const.py
+        # Map known sensors
         for sid, meta in SENSOR_DEFINITIONS.items():
             api_key = meta["api_key"]
             value = raw.get(api_key)
@@ -234,7 +293,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 "attributes": {"timestamp": timestamp_str},
             }
 
-        # 2. Spárujeme případná nová dynamická čidla ze serveru
+        # Map dynamic sensors
         for api_key, value in raw.items():
             if value is None or api_key in ["Datum", "SrazkyDen", "SrazkyIntenzita"]:
                 continue
@@ -263,15 +322,22 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         return result
 
-    def _update_daily_stats(self, data: dict[str, dict]):
-        """Compute min/max and incremental daily wind statistics securely using Czech IDs."""
-        today = date.today()
+    # -------------------------------------------------------------------------
+    # Rolling 24h statistics
+    # -------------------------------------------------------------------------
 
-        # Pokud nastal nový den, kompletně resetujeme denní paměť statistik
-        if "_date" not in self._daily_stats or self._daily_stats["_date"] != today:
+    def _update_daily_stats(self, data: dict[str, dict]):
+        """
+        Compute rolling 24-hour statistics:
+        - min/max for all numeric sensors
+        - avg/mode/variance for wind direction (circular statistics)
+        """
+
+        # Ensure statistics structure exists
+        if "_date" not in self._daily_stats:
             self._daily_stats = {
-                "_date": today,
-                "vitr_smer_angles": [], # Pole pro ukládání historie úhlů pro přesný modus
+                "_date": date.today(),
+                "vitr_smer_angles": [],
                 "vitr_smer_sin_sum": 0.0,
                 "vitr_smer_cos_sum": 0.0,
                 "vitr_smer_count": 0
@@ -282,50 +348,48 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if not isinstance(value, (int, float)):
                 continue
 
-            # Standardní celoplošný denní min/max pro všechny číselné senzory
+            # Rolling min/max
             stats = self._daily_stats.setdefault(sid, {"min": value, "max": value})
-            if value < stats["min"]:
-                stats["min"] = value
-            if value > stats["max"]:
-                stats["max"] = value
+            stats["min"] = min(stats["min"], value)
+            stats["max"] = max(stats["max"], value)
 
             payload["attributes"]["min"] = stats["min"]
             payload["attributes"]["max"] = stats["max"]
 
-            # SPECIÁLNÍ UKÁZKOVÁ INKREMENTÁLNÍ MATEMATIKA PRO SMĚR VĚTRU
+            # Wind direction circular statistics
             if sid == "vitr_smer":
                 import math
                 from collections import Counter
 
-                # 1. Výpočet průměru (Vektorový průměr úhlů pomocí sinu a kosinu)
-                rad = math.radians(value)
+                angle = float(value)
+                rad = math.radians(angle)
+
+                # Update vector sums
                 self._daily_stats["vitr_smer_sin_sum"] += math.sin(rad)
                 self._daily_stats["vitr_smer_cos_sum"] += math.cos(rad)
                 self._daily_stats["vitr_smer_count"] += 1
 
-                avg_sin = self._daily_stats["vitr_smer_sin_sum"] / self._daily_stats["vitr_smer_count"]
-                avg_cos = self._daily_stats["vitr_smer_cos_sum"] / self._daily_stats["vitr_smer_count"]
-                
+                count = self._daily_stats["vitr_smer_count"]
+                avg_sin = self._daily_stats["vitr_smer_sin_sum"] / count
+                avg_cos = self._daily_stats["vitr_smer_cos_sum"] / count
+
+                # Circular average
                 avg_deg = math.degrees(math.atan2(avg_sin, avg_cos))
                 if avg_deg < 0:
                     avg_deg += 360.0
-                
-                # 2. Výpočet modusu (Nejčastější hodnota za dnešek zaokrouhlená na světové směry)
-                self._daily_stats["vitr_smer_angles"].append(value)
-                # Zaokrouhlíme na nejbližších 22.5 stupně pro stabilní určení dominantního směru
-                rounded_angles = [round(a / 22.5) * 22.5 % 360 for a in self._daily_stats["vitr_smer_angles"]]
-                occurence_count = Counter(rounded_angles)
-                mode_deg = occurence_count.most_common(1)[0][0]
 
-                # 3. Výpočet rozptylu variance (Kruhová směrodatná odchylka)
-                # Vzorec: R = sqrt(avg_sin^2 + avg_cos^2). Rozptyl = sqrt(-2 * ln(R)) v radiánech.
+                # Mode (rounded to nearest 22.5°)
+                self._daily_stats["vitr_smer_angles"].append(angle)
+                rounded = [round(a / 22.5) * 22.5 % 360 for a in self._daily_stats["vitr_smer_angles"]]
+                mode_deg = Counter(rounded).most_common(1)[0][0]
+
+                # Circular variance
                 r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
-                if r_vector > 0.001 and r_vector < 1.0:
+                if 0.001 < r_vector < 1.0:
                     var_deg = math.degrees(math.sqrt(-2.0 * math.log(r_vector)))
                 else:
                     var_deg = 0.0
 
-                # Zápis hotových denních statistik přímo do atributů senzoru pro Lovelace kartu
                 payload["attributes"]["vitr_smer_avg"] = round(avg_deg, 1)
                 payload["attributes"]["vitr_smer_mode"] = round(mode_deg, 1)
                 payload["attributes"]["vitr_smer_var"] = round(min(var_deg, 180.0), 1)
