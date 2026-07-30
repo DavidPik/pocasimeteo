@@ -13,7 +13,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 from homeassistant.helpers import aiohttp_client
 from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.models import States
+from homeassistant.components.recorder.db_schema import States
 from sqlalchemy import select
 
 from .const import (
