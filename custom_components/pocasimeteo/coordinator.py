@@ -96,6 +96,46 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "vitr_smer_count": 0
         }
 
+        # --- Compute rainfall intensity directly from imported history ---
+        # We sort history by timestamp ascending to compute correct deltas
+        sorted_measurements = sorted(
+            measurements,
+            key=lambda m: datetime.fromisoformat(m["Datum"].replace("Z", "+00:00"))
+        )
+
+        previous_rain = None
+        previous_ts = None
+
+        for m in sorted_measurements:
+            ts_raw = m.get("Datum")
+            if not ts_raw:
+                continue
+
+            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            try:
+                rain_total = float(m.get("SrazkyDen", 0))
+            except Exception:
+                rain_total = 0.0
+
+            # Compute intensity only if previous value exists
+            if previous_rain is not None:
+                delta_rain = rain_total - previous_rain
+                delta_time = (ts - previous_ts).total_seconds() / 3600.0
+
+                if delta_rain > 0 and delta_time > 0:
+                    intensity = round(delta_rain / delta_time, 2)
+                else:
+                    intensity = 0.0
+
+                # Store computed intensity back into the measurement
+                m["SrazkyIntenzita"] = intensity
+            else:
+                # First point has no previous reference
+                m["SrazkyIntenzita"] = 0.0
+
+            previous_rain = rain_total
+            previous_ts = ts
+
         for m in measurements:
             ts_raw = m.get("Datum")
             if not ts_raw:
@@ -208,29 +248,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         if not isinstance(raw, dict):
             raise UpdateFailed("Invalid API response format")
-
-        # Rain intensity calculation
-        try:
-            current_rain = float(raw.get("SrazkyDen", 0))
-        except Exception:
-            current_rain = 0.0
-
-        rain_intensity = 0.0
-        now = datetime.now()
-
-        if self._last_rain_value is not None and self._last_rain_timestamp is not None:
-            time_delta = now - self._last_rain_timestamp
-            hours_passed = time_delta.total_seconds() / 3600.0
-
-            if hours_passed > 0.0027:  # ~10 seconds
-                if current_rain >= self._last_rain_value:
-                    rain_intensity = round((current_rain - self._last_rain_value) / hours_passed, 2)
-                else:
-                    rain_intensity = round(current_rain / hours_passed, 2)
-
-        self._last_rain_value = current_rain
-        self._last_rain_timestamp = now
-        raw["SrazkyIntenzita"] = rain_intensity
 
         # ---------------------------------------------------------------------
         # Import 24h history BEFORE normalizing data
