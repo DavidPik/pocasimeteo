@@ -136,22 +136,23 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             previous_rain = rain_total
             previous_ts = ts
 
+        # Save last computed intensity for use in raw payload
+        self._latest_rain_intensity = sorted_measurements[-1].get("SrazkyIntenzita", 0.0)
+
+        # Insert historical points into Recorder and compute wind stats
         for m in measurements:
             ts_raw = m.get("Datum")
             if not ts_raw:
                 continue
 
-            # Convert ISO timestamp from API
             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
 
-            # Process all measurement fields
             for key, value in m.items():
                 if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
                     continue
 
                 entity_id = f"sensor.pocasimeteo_{key.lower()}"
 
-                # Convert numeric values
                 try:
                     v = float(value)
                 except Exception:
@@ -160,19 +161,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if v is None:
                     continue
 
-                # Insert missing historical points into Recorder
                 if not await self._history_exists(entity_id, ts):
                     await self._insert_history_point(entity_id, v, ts)
 
-                # Extend rolling 24h statistics for wind direction
                 if key.lower() == "vitr_smer":
                     import math
                     angle = float(v)
 
-                    # Store angle for mode calculation
                     self._daily_stats["vitr_smer_angles"].append(angle)
 
-                    # Add to vector sums for circular average
                     rad = math.radians(angle)
                     self._daily_stats["vitr_smer_sin_sum"] += math.sin(rad)
                     self._daily_stats["vitr_smer_cos_sum"] += math.cos(rad)
@@ -194,12 +191,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(minutes=update_interval_minutes),
         )
 
-        # Rolling 24h statistics storage
         self._daily_stats: dict[str, dict[str, float]] = {}
 
-        # Rain intensity tracking
+        # Legacy fields kept for compatibility (no longer used)
         self._last_rain_value: float | None = None
         self._last_rain_timestamp: datetime | None = None
+
+        # Latest computed rainfall intensity (from history)
+        self._latest_rain_intensity: float = 0.0
 
     # -------------------------------------------------------------------------
     # Main API update
@@ -224,11 +223,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception as err:
             raise UpdateFailed(f"API request failed: {err}") from err
 
-        # API sometimes returns error messages inside JSON
         if isinstance(raw, dict) and "Zprava" in raw:
             raise UpdateFailed(f"PočasíMeteo API Error: {raw['Zprava']}")
 
-        # Extract metadata and weather payload
         self.station_metadata = {}
 
         if isinstance(raw, list) and len(raw) > 0:
@@ -238,7 +235,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
-            # Weather payload may be in raw[1] or raw[0]
             if len(raw) > 1 and isinstance(raw[1], dict) and "Datum" in raw[1]:
                 raw = raw[1]
             elif isinstance(raw[0], dict) and "Datum" in raw[0]:
@@ -267,6 +263,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as hist_err:
                 _LOGGER.warning(f"Import historie PočasíMeteo selhal: {hist_err}")
 
+        # Inject latest computed rainfall intensity into raw payload
+        raw["SrazkyIntenzita"] = self._latest_rain_intensity
+
         # ---------------------------------------------------------------------
         # Normalize and compute statistics
         # ---------------------------------------------------------------------
@@ -288,7 +287,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         result: dict[str, dict] = {}
         timestamp_str = datetime.now().isoformat()
 
-        # Map known sensors
         for sid, meta in SENSOR_DEFINITIONS.items():
             api_key = meta["api_key"]
             value = raw.get(api_key)
@@ -310,9 +308,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 "attributes": {"timestamp": timestamp_str},
             }
 
-        # Map dynamic sensors
         for api_key, value in raw.items():
-            if value is None or api_key in ["Datum", "SrazkyDen", "SrazkyIntenzita"]:
+            if value is None or api_key in ["Datum", "SrazkyDen"]:
                 continue
 
             already_mapped = any(m["api_key"] == api_key for m in SENSOR_DEFINITIONS.values())
@@ -350,7 +347,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         - avg/mode/variance for wind direction (circular statistics)
         """
 
-        # Ensure statistics structure exists
         if "_date" not in self._daily_stats:
             self._daily_stats = {
                 "_date": date.today(),
@@ -365,7 +361,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if not isinstance(value, (int, float)):
                 continue
 
-            # Rolling min/max
             stats = self._daily_stats.setdefault(sid, {"min": value, "max": value})
             stats["min"] = min(stats["min"], value)
             stats["max"] = max(stats["max"], value)
@@ -373,7 +368,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             payload["attributes"]["min"] = stats["min"]
             payload["attributes"]["max"] = stats["max"]
 
-            # Wind direction circular statistics
             if sid == "vitr_smer":
                 import math
                 from collections import Counter
@@ -381,7 +375,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 angle = float(value)
                 rad = math.radians(angle)
 
-                # Update vector sums
                 self._daily_stats["vitr_smer_sin_sum"] += math.sin(rad)
                 self._daily_stats["vitr_smer_cos_sum"] += math.cos(rad)
                 self._daily_stats["vitr_smer_count"] += 1
@@ -390,17 +383,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 avg_sin = self._daily_stats["vitr_smer_sin_sum"] / count
                 avg_cos = self._daily_stats["vitr_smer_cos_sum"] / count
 
-                # Circular average
                 avg_deg = math.degrees(math.atan2(avg_sin, avg_cos))
                 if avg_deg < 0:
                     avg_deg += 360.0
 
-                # Mode (rounded to nearest 22.5°)
                 self._daily_stats["vitr_smer_angles"].append(angle)
                 rounded = [round(a / 22.5) * 22.5 % 360 for a in self._daily_stats["vitr_smer_angles"]]
                 mode_deg = Counter(rounded).most_common(1)[0][0]
 
-                # Circular variance
                 r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
                 if 0.001 < r_vector < 1.0:
                     var_deg = math.degrees(math.sqrt(-2.0 * math.log(r_vector)))
