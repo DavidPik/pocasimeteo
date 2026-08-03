@@ -136,7 +136,7 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
     "uv_index": {
         "name": "UV index",
-        "unit": "",
+        "unit": None,
         "icon": "mdi:sun-wireless",
         "device_class": None,
         "state_class": "measurement",
