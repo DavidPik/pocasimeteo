@@ -174,5 +174,7 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 # OPTIONS FLOW
 # ------------------------------------------------------------
 
-async def async_get_options_flow(config_entry: ConfigEntry) -> PocasimeteoOptionsFlow:
+@callback
+def async_get_options_flow(config_entry):
     return PocasimeteoOptionsFlow(config_entry)
+
