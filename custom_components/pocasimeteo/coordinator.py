@@ -24,6 +24,7 @@ from .const import (
     CONF_API_KEY,
     CONF_UPDATE_INTERVAL,
     CONF_SENSORS,
+    CONF_STATION,
     SENSOR_DEFINITIONS,
     DEFAULT_SENSOR_OPTIONS,
     get_dynamic_sensor_meta,
