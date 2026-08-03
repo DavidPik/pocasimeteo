@@ -13,6 +13,8 @@ from homeassistant.helpers.entity import DeviceInfo
 from .const import DOMAIN
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
+from datetime import datetime
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -36,7 +38,7 @@ class PočasíMeteoWeather(WeatherEntity):
         self._entry = entry
 
         self._attr_unique_id = entry.entry_id
-        self._attr_name = coordinator.station_metadata.get("station_name") or "PočasíMeteo"
+        self._attr_name = self._entry.data.get("station_name") or "PočasíMeteo"
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -91,6 +93,14 @@ class PočasíMeteoWeather(WeatherEntity):
     def extra_state_attributes(self):
         attrs = dict(self._coordinator.station_metadata)
 
+        # timestamp měření
+        attrs["timestamp"] = datetime.now().isoformat()
+
+        # srážky za den (API klíč SrazkyDen)
+        raw = self._coordinator.data
+        if isinstance(raw, dict):
+            attrs["srazky_den"] = raw.get("SrazkyDen", 0)
+
         # připravíme metadata pro kartu (sensors pole)
         sensors_meta = []
         for sid, payload in self._coordinator.sensors_payload.items():
@@ -101,9 +111,10 @@ class PočasíMeteoWeather(WeatherEntity):
                     "entity_id": f"sensor.{self._entry.entry_id}_{sid}",
                     "type": meta.get("type", "secondary"),
                     "order": meta.get("order", 999),
-                    "visible": True,
+                    "visible": meta.get("visible", True),
                 }
             )
 
         attrs["sensors"] = sensors_meta
+
         return attrs
