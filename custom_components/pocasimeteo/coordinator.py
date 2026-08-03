@@ -314,13 +314,21 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             result[sid] = {
                 "value": value,
-                "type": meta["type"],
-                "order": opts.get("order", meta["order"]),
-                "graph_color": opts.get("color", meta["color"]),
-                "graph_style": opts.get("style", "smooth"),
-                "visible": opts.get("visible", True),
-                "is_numeric": isinstance(value, (int, float)),
-                "attributes": {"timestamp": timestamp_str},
+                "meta": {
+                    "name": meta["name"],
+                    "unit": meta["unit"],
+                    "icon": meta.get("icon"),
+                    "device_class": meta.get("device_class"),
+                    "state_class": meta.get("state_class"),
+                    "type": meta["type"],
+                    "order": opts.get("order", meta["order"]),
+                    "color": opts.get("color", meta["color"]),
+                    "style": opts.get("style", "smooth"),
+                    "visible": opts.get("visible", True),
+                },
+                    "attributes": {
+                    "timestamp": timestamp_str,
+                },
             }
 
         # ---------------------------------------------------------------------
@@ -357,13 +365,21 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             result[sid] = {
                 "value": value,
-                "type": meta["type"],
-                "order": opts["order"],
-                "graph_color": opts["color"],
-                "graph_style": opts["style"],
-                "visible": opts["visible"],
-                "is_numeric": isinstance(value, (int, float)),
-                "attributes": {"timestamp": timestamp_str},
+                "meta": {
+                    "name": meta["name"],
+                    "unit": meta["unit"],
+                    "icon": meta.get("icon"),
+                    "device_class": meta.get("device_class"),
+                    "state_class": meta.get("state_class"),
+                    "type": meta["type"],
+                    "order": opts["order"],
+                    "color": opts["color"],
+                    "style": opts["style"],
+                    "visible": opts["visible"],
+                },
+                "attributes": {
+                    "timestamp": timestamp_str,
+                },
             }
 
         return result
