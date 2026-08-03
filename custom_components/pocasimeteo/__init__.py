@@ -61,7 +61,6 @@ def _migrate_options(entry: ConfigEntry) -> dict:
 
         for sensor_id, defaults in DEFAULT_SENSOR_OPTIONS.items():
             if sensor_id in sensors_opt:
-                # doplníme chybějící klíče
                 migrated[sensor_id] = {
                     "order": sensors_opt[sensor_id].get("order", defaults["order"]),
                     "color": sensors_opt[sensor_id].get("color", defaults["color"]),
@@ -69,12 +68,48 @@ def _migrate_options(entry: ConfigEntry) -> dict:
                     "visible": sensors_opt[sensor_id].get("visible", True),
                 }
             else:
-                # senzor chybí → doplníme default
                 migrated[sensor_id] = defaults.copy()
 
         new_options[CONF_SENSORS] = migrated
 
     return new_options
+
+
+# ------------------------------------------------------------
+# MIGRACE ENTRY VERSION
+# ------------------------------------------------------------
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """
+    Migrate old config entries to the latest version.
+
+    VERSION in config_flow.py = 4
+    → pokud entry.version < 4, provedeme migraci options a nastavíme verzi na 4.
+    """
+
+    _LOGGER.debug(
+        "pocasimeteo: migrating entry %s (version %s)",
+        entry.entry_id,
+        entry.version,
+    )
+
+    # Migrace pouze pokud je starší verze
+    if entry.version < 4:
+        migrated_options = _migrate_options(entry)
+
+        hass.config_entries.async_update_entry(
+            entry,
+            options=migrated_options,
+        )
+
+        entry.version = 4
+
+        _LOGGER.debug(
+            "pocasimeteo: migration completed for entry %s → version 4",
+            entry.entry_id,
+        )
+
+    return True
 
 
 # ------------------------------------------------------------
@@ -90,7 +125,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.options,
     )
 
-    # MIGRACE OPTIONS
+    # MIGRACE OPTIONS (pro jistotu i při setupu)
     migrated_options = _migrate_options(entry)
 
     if migrated_options != entry.options:
