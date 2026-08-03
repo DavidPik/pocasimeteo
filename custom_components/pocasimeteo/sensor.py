@@ -69,6 +69,23 @@ class PočasíMeteoSensor(SensorEntity):
         if not payload:
             return None
         return payload.get("value")
+        
+    @property
+    def extra_state_attributes(self):
+        payload = self._coordinator.sensors_payload.get(self._sensor_id)
+        if not payload:
+            return {}
+
+        meta = payload["meta"]
+        attrs = payload.get("attributes", {})
+
+        return {
+            "graph_color": meta.get("color"),
+            "graph_style": meta.get("style"),
+            "order": meta.get("order"),
+            "visible": meta.get("visible"),
+            **attrs,
+        }
 
     async def async_update(self) -> None:
         await self._coordinator.async_request_refresh()
