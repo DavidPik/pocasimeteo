@@ -212,7 +212,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if isinstance(raw, list) and len(raw) > 0:
             meta_payload = raw[0]
             if isinstance(meta_payload, dict):
-                self.station_metadata["station_name"] = meta_payload.get("LokalitaStanice")
+                self.station_metadata["station_name"] = self.entry.data.get(CONF_STATION)
+                self.station_metadata["lokalita"] = meta_payload.get("LokalitaStanice")
                 if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
