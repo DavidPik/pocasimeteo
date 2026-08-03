@@ -181,5 +181,5 @@ The integration stores configuration in `config_entry.options`:
 MIT License
 
 ## Credits
-Developed by David Pik  
+Developed by David Pikálek  
 Weather data provided by PočasíMeteo.cz
