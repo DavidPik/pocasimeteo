@@ -164,7 +164,9 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 # OPTIONS FLOW REGISTRATION (CRITICAL FIX)
 # ------------------------------------------------------------
 
+from homeassistant.core import callback
+
 @callback
-def async_get_options_flow(config_entry: ConfigEntry):
-    """Return the options flow handler."""
+def async_get_options_flow(config_entry):
     return PocasimeteoOptionsFlow(config_entry)
+
