@@ -26,6 +26,7 @@ from .const import (
     CONF_SENSORS,
     SENSOR_DEFINITIONS,
     DEFAULT_SENSOR_OPTIONS,
+    get_dynamic_sensor_meta,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,7 +47,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _history_exists(self, entity_id: str, ts: datetime) -> bool:
-        """Check if a historical state with the given timestamp already exists."""
         rec = get_instance(self.hass)
         with rec.get_session() as session:
             q = select(States).where(
@@ -56,7 +56,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             return session.execute(q).first() is not None
 
     async def _insert_history_point(self, entity_id: str, value, ts: datetime):
-        """Insert a historical state into Recorder DB."""
         rec = get_instance(self.hass)
 
         def _insert():
@@ -78,12 +77,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _import_history(self, measurements: list[dict]):
-        """
-        Import complete 5-minute history into Recorder.
-        Also rebuild rolling 24-hour statistics from scratch.
-        """
-
-        # Reset rolling statistics
         self._daily_stats = {
             "_date": date.today(),
             "vitr_smer_angles": [],
@@ -92,7 +85,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "vitr_smer_count": 0
         }
 
-        # Sort history by timestamp for correct rainfall intensity computation
         sorted_measurements = sorted(
             measurements,
             key=lambda m: datetime.fromisoformat(m["Datum"].replace("Z", "+00:00"))
@@ -101,7 +93,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         previous_rain = None
         previous_ts = None
 
-        # Compute rainfall intensity from history
         for m in sorted_measurements:
             ts_raw = m.get("Datum")
             if not ts_raw:
@@ -129,10 +120,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             previous_rain = rain_total
             previous_ts = ts
 
-        # Store last computed intensity
         self._latest_rain_intensity = sorted_measurements[-1].get("SrazkyIntenzita", 0.0)
 
-        # Insert history into Recorder and compute wind direction stats
         for m in measurements:
             ts_raw = m.get("Datum")
             if not ts_raw:
@@ -157,7 +146,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if not await self._history_exists(entity_id, ts):
                     await self._insert_history_point(entity_id, v, ts)
 
-                # Wind direction circular statistics
                 if key.lower() == "vitr_smer":
                     import math
                     angle = float(v)
@@ -177,13 +165,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self.hass = hass
         self.entry = entry
 
-        # Load update interval from options or config
         update_interval_minutes = entry.options.get(
             CONF_UPDATE_INTERVAL,
             entry.data.get(CONF_UPDATE_INTERVAL, 5)
         )
 
-        # Load sensor options (color, style, order, visibility)
         self._sensor_options = entry.options.get(CONF_SENSORS, DEFAULT_SENSOR_OPTIONS)
 
         super().__init__(
@@ -195,11 +181,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         self._daily_stats: dict[str, dict[str, float]] = {}
 
-        # Legacy fields kept for compatibility
         self._last_rain_value: float | None = None
         self._last_rain_timestamp: datetime | None = None
 
-        # Latest computed rainfall intensity
         self._latest_rain_intensity: float = 0.0
 
     # -------------------------------------------------------------------------
@@ -207,8 +191,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _async_update_data(self):
-        """Fetch and normalize data from PočasíMeteo API."""
-
         api_key = self.entry.data[CONF_API_KEY]
         url = f"{API_URL_BASE}?KlicApi={api_key}"
 
@@ -225,7 +207,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if isinstance(raw, dict) and "Zprava" in raw:
             raise UpdateFailed(f"PočasíMeteo API Error: {raw['Zprava']}")
 
-        # Extract metadata and weather payload
         self.station_metadata = {}
 
         if isinstance(raw, list) and len(raw) > 0:
@@ -245,10 +226,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if not isinstance(raw, dict):
             raise UpdateFailed("Invalid API response format")
 
-        # ---------------------------------------------------------------------
-        # Import 24h history BEFORE normalizing data
-        # ---------------------------------------------------------------------
-
         history_payload = None
 
         if isinstance(raw.get("DoplCidlaJson"), dict):
@@ -263,19 +240,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as hist_err:
                 _LOGGER.warning(f"Import historie PočasíMeteo selhal: {hist_err}")
 
-        # Inject latest computed rainfall intensity
         raw["SrazkyIntenzita"] = self._latest_rain_intensity
-
-        # ---------------------------------------------------------------------
-        # Normalize and compute statistics
-        # ---------------------------------------------------------------------
 
         normalized = self._normalize_data(raw)
         self._update_daily_stats(normalized)
 
-        # uložíme payload pro sensor.py a weather.py
         self.sensors_payload = normalized
-        
+
         return normalized
 
     # -------------------------------------------------------------------------
@@ -283,17 +254,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
-        """
-        Convert API fields into HA sensor format.
-        Adds timestamp, numeric conversion, and user-configured metadata.
-        """
-
         result: dict[str, dict] = {}
         timestamp_str = datetime.now().isoformat()
-
-        # ---------------------------------------------------------------------
-        # Known sensors from SENSOR_DEFINITIONS
-        # ---------------------------------------------------------------------
 
         for sid, meta in SENSOR_DEFINITIONS.items():
             api_key = meta["api_key"]
@@ -302,14 +264,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if value is None:
                 continue
 
-            # Convert numeric strings
             if isinstance(value, str):
                 try:
                     value = float(value) if "." in value else int(value)
                 except ValueError:
                     pass
 
-            # Load user-configured options
             opts = self._sensor_options.get(sid, DEFAULT_SENSOR_OPTIONS.get(sid, {}))
 
             result[sid] = {
@@ -326,36 +286,28 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     "style": opts.get("style", "smooth"),
                     "visible": opts.get("visible", True),
                 },
-                    "attributes": {
+                "attributes": {
                     "timestamp": timestamp_str,
                 },
             }
-
-        # ---------------------------------------------------------------------
-        # Dynamic sensors (unknown API keys)
-        # ---------------------------------------------------------------------
 
         for api_key, value in raw.items():
             if value is None or api_key in ["Datum", "SrazkyDen"]:
                 continue
 
-            # Skip known sensors
             already_mapped = any(m["api_key"] == api_key for m in SENSOR_DEFINITIONS.values())
             if already_mapped:
                 continue
 
-            # Convert numeric strings
             if isinstance(value, str):
                 try:
                     value = float(value) if "." in value else int(value)
                 except ValueError:
                     pass
 
-            from .const import get_dynamic_sensor_meta
             meta = get_dynamic_sensor_meta(api_key)
             sid = api_key.lower()
 
-            # Load user-configured options or defaults
             opts = self._sensor_options.get(sid, {
                 "order": meta["order"],
                 "color": meta["color"],
@@ -389,12 +341,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     def _update_daily_stats(self, data: dict[str, dict]):
-        """
-        Compute rolling 24-hour statistics:
-        - min/max for all numeric sensors
-        - avg/mode/variance for wind direction (circular statistics)
-        """
-
         if "_date" not in self._daily_stats:
             self._daily_stats = {
                 "_date": date.today(),
@@ -409,7 +355,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if not isinstance(value, (int, float)):
                 continue
 
-            # Min/max statistics
             stats = self._daily_stats.setdefault(sid, {"min": value, "max": value})
             stats["min"] = min(stats["min"], value)
             stats["max"] = max(stats["max"], value)
@@ -417,7 +362,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             payload["attributes"]["min"] = stats["min"]
             payload["attributes"]["max"] = stats["max"]
 
-            # Wind direction circular statistics
             if sid == "vitr_smer":
                 import math
                 from collections import Counter
