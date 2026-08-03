@@ -109,7 +109,7 @@ class PočasíMeteoWeather(WeatherEntity):
 
             # pokud entita neexistuje v hass.states, přeskočíme ji
             entity_id = f"sensor.{station}_{sid}"
-            if entity_id not in self.hass.states:
+            if self.hass.states.get(entity_id) is None:
                 continue
             
             sensors_meta.append(
