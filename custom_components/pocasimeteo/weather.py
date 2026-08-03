@@ -48,6 +48,39 @@ class PočasíMeteoWeather(WeatherEntity):
         )
 
     @property
+    def condition(self):
+        """Odvozený stav počasí podle senzorů."""
+        sensors = self._coordinator.sensors_payload
+
+        # 1) Déšť
+        rain = sensors.get("intenzita_srazek", {}).get("value")
+        if rain is not None and rain > 0:
+            if rain > 2:
+                return "pouring"
+            return "rainy"
+
+        # 2) Sluneční záření
+        solar = sensors.get("slunecni_zareni", {}).get("value")
+        if solar is not None:
+            if solar > 300:
+                return "sunny"
+            if solar > 100:
+                return "partlycloudy"
+
+        # 3) UV index
+        uv = sensors.get("uv_index", {}).get("value")
+        if uv is not None and uv > 5:
+            return "sunny"
+
+        # 4) Vítr
+        wind = sensors.get("vitr_rychlost", {}).get("value")
+        if wind is not None and wind > 10:
+            return "windy"
+
+        # 5) Default
+        return "cloudy"
+
+    @property
     def temperature(self):
         sensor = self._coordinator.sensors_payload.get("teplota_vnejsi")
         if not sensor:
