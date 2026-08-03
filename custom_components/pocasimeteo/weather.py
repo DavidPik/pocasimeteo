@@ -54,14 +54,14 @@ class PočasíMeteoWeather(WeatherEntity):
 
     @property
     def pressure(self):
-        sensor = self._coordinator.sensors_payload.get("tlak")
+        sensor = self._coordinator.sensors_payload.get("tlak_relativni")
         if not sensor:
             return None
         return sensor.get("value")
 
     @property
     def humidity(self):
-        sensor = self._coordinator.sensors_payload.get("vlhkost")
+        sensor = self._coordinator.sensors_payload.get("vlhkost_vnejsi")
         if not sensor:
             return None
         return sensor.get("value")
