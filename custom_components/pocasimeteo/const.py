@@ -1,21 +1,45 @@
 """Constants for PočasíMeteo integration."""
 
 from __future__ import annotations
-
 from datetime import timedelta
 from typing import Any
 
 DOMAIN = "pocasimeteo"
 DEFAULT_NAME = "PočasíMeteo"
 
-CONF_STATION = "station_name"          
-CONF_API_KEY = "api_key"               
-CONF_UPDATE_INTERVAL = "update_interval"  
+# ------------------------------------------------------------
+# Konfigurační klíče
+# ------------------------------------------------------------
+
+CONF_STATION = "station_name"
+CONF_API_KEY = "api_key"
+CONF_UPDATE_INTERVAL = "update_interval"
+CONF_FORECAST_ENTITY_ID = "forecast_entity_id"
+CONF_SENSORS = "sensors"
 
 API_URL_BASE = "https://ext.pocasimeteo.cz/ms/api/weather"
 
 DEFAULT_UPDATE_INTERVAL_MINUTES = 5
 DEFAULT_UPDATE_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL_MINUTES)
+
+# ------------------------------------------------------------
+# Styl grafů
+# ------------------------------------------------------------
+
+GRAPH_STYLE_SMOOTH = "smooth"
+GRAPH_STYLE_STEPPED = "stepped"
+
+STEPPED_SENSOR_IDS = [
+    "vitr_rychlost",
+    "vitr_narazy",
+    "vitr_smer",
+    "intenzita_srazek",
+    "srazky_den",
+]
+
+# ------------------------------------------------------------
+# Definice senzorů (metadata)
+# ------------------------------------------------------------
 
 SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
     "teplota_vnejsi": {
@@ -119,39 +143,22 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
     },
 }
 
-def get_dynamic_sensor_meta(key: str) -> dict[str, Any]:
-    """Fallback metadata pro neznámá čidla."""
-    key_lower = key.lower()
-    name = key
-    unit = ""
-    icon = "mdi:eye"
-    sensor_type = "secondary"
-    order = 200
-    color = "#7e57c2"
+# ------------------------------------------------------------
+# Default options pro migraci a ConfigFlow
+# ------------------------------------------------------------
 
-    if key_lower.startswith("te") or "temp" in key_lower:
-        name = f"Teplota {key.replace('Te', '')}"
-        unit = "°C"
-        icon = "mdi:thermometer"
-        color = "#ff6b3d"
-    elif key_lower.startswith("vl") or "hum" in key_lower:
-        name = f"Vlhkost {key.replace('Vl', '')}"
-        unit = "%"
-        icon = "mdi:water-percent"
-        color = "#1e88e5"
-    elif "co2" in key_lower:
-        name = "CO₂"
-        unit = "ppm"
-        icon = "mdi:molecule-co2"
-        order = 110
-        color = "#6d4c41"
-
-    return {
-        "name": name,
-        "unit": unit,
-        "icon": icon,
-        "type": sensor_type,
-        "order": order,
-        "api_key": key,
-        "color": color,
+DEFAULT_SENSOR_OPTIONS = {
+    sensor_id: {
+        "order": meta["order"],
+        "color": meta["color"],
+        "style": GRAPH_STYLE_STEPPED if sensor_id in STEPPED_SENSOR_IDS else GRAPH_STYLE_SMOOTH,
+        "visible": True,
     }
+    for sensor_id, meta in SENSOR_DEFINITIONS.items()
+}
+
+DEFAULT_OPTIONS = {
+    CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL_MINUTES,
+    CONF_FORECAST_ENTITY_ID: "",
+    CONF_SENSORS: DEFAULT_SENSOR_OPTIONS,
+}
