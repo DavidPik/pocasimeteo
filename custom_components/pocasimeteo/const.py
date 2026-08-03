@@ -2,7 +2,7 @@
 
 DOMAIN = "pocasimeteo"
 
-API_URL_BASE = "https://www.pocasimeteo.cz/api/meteo"
+API_URL_BASE = "https://ext.pocasimeteo.cz/ms/api/weather"
 
 CONF_STATION = "station"
 CONF_API_KEY = "api_key"
