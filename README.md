@@ -158,28 +158,28 @@ The integration stores configuration in `config_entry.options`:
 }
 ```
 
-Troubleshooting
-No data appears
+## Troubleshooting
+### No data appears
 - Verify your API key is correct.
 - Check PočasíMeteo API availability.
 - Restart Home Assistant.
 
-Sensors missing
+### Sensors missing
 - Some sensors appear only when the station reports them.
 - Dynamic sensors are created automatically when detected.
 
-History not visible
+### History not visible
 - Recorder must be enabled.
 - The integration imports 5‑minute history automatically.
 
-Known limitations
+## Known limitations
 - Forecast entity is optional and depends on other weather integrations.
 - Some stations may not provide all sensor types.
 - Rainfall intensity is computed from history and may differ slightly from API values.
 
-License
+## License
 MIT License
 
-Credits
+## Credits
 Developed by David Pik  
 Weather data provided by PočasíMeteo.cz
