@@ -162,3 +162,28 @@ DEFAULT_OPTIONS = {
     CONF_FORECAST_ENTITY_ID: "",
     CONF_SENSORS: DEFAULT_SENSOR_OPTIONS,
 }
+
+# ------------------------------------------------------------
+# Deal with dynamic sensors not defined in CONST and options
+# ------------------------------------------------------------
+
+def get_dynamic_sensor_meta(api_key: str) -> dict:
+    """
+    Return metadata for dynamically discovered sensors.
+    Used when API returns fields not present in SENSOR_DEFINITIONS.
+    """
+
+    # Normalizace ID
+    sid = api_key.lower()
+
+    # Defaultní metadata pro dynamické senzory
+    return {
+        "api_key": api_key,
+        "name": api_key.replace("_", " ").capitalize(),
+        "unit": None,
+        "icon": "mdi:chart-line",
+        "type": "secondary",
+        "order": 999,  # dynamické senzory jdou vždy na konec
+        "color": "#3b82f6",  # defaultní modrá
+        "style": "smooth",
+    }
