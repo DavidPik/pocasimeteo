@@ -7,7 +7,7 @@ import async_timeout
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers import entity_registry as er
@@ -34,24 +34,38 @@ _LOGGER = logging.getLogger(__name__)
 
 def build_sensor_form(options_sensors: dict) -> dict:
     """Build dynamic schema for all sensors."""
-    schema = {}
+    schema: dict = {}
 
     for sensor_id, meta in DEFAULT_SENSOR_OPTIONS.items():
         current = options_sensors.get(sensor_id, meta)
 
-        schema.update({
-            vol.Required(f"{sensor_id}_order", default=current["order"]): vol.All(int, vol.Range(min=1, max=999)),
-            vol.Required(f"{sensor_id}_color", default=current["color"]): str,
-            vol.Required(f"{sensor_id}_style", default=current["style"]): vol.In([GRAPH_STYLE_SMOOTH, GRAPH_STYLE_STEPPED]),
-            vol.Required(f"{sensor_id}_visible", default=current["visible"]): bool,
-        })
+        schema.update(
+            {
+                vol.Required(
+                    f"{sensor_id}_order",
+                    default=current["order"],
+                ): vol.All(int, vol.Range(min=1, max=999)),
+                vol.Required(
+                    f"{sensor_id}_color",
+                    default=current["color"],
+                ): str,
+                vol.Required(
+                    f"{sensor_id}_style",
+                    default=current["style"],
+                ): vol.In([GRAPH_STYLE_SMOOTH, GRAPH_STYLE_STEPPED]),
+                vol.Required(
+                    f"{sensor_id}_visible",
+                    default=current["visible"],
+                ): bool,
+            }
+        )
 
     return schema
 
 
 def validate_sensor_order(user_input: dict) -> bool:
     """Validate that sensor order is linear (1..N)."""
-    orders = []
+    orders: list[int] = []
 
     for sensor_id in DEFAULT_SENSOR_OPTIONS:
         orders.append(user_input[f"{sensor_id}_order"])
@@ -63,7 +77,7 @@ def validate_sensor_order(user_input: dict) -> bool:
 def convert_user_input_to_options(user_input: dict) -> dict:
     """Convert form input to final options structure."""
 
-    sensors = {}
+    sensors: dict = {}
     for sensor_id in DEFAULT_SENSOR_OPTIONS:
         sensors[sensor_id] = {
             "order": user_input[f"{sensor_id}_order"],
@@ -80,13 +94,14 @@ def convert_user_input_to_options(user_input: dict) -> dict:
 
 
 # ------------------------------------------------------------
-# OPTIONS FLOW (inside config_flow.py)
+# OPTIONS FLOW
 # ------------------------------------------------------------
 
 class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
-    """Handle options updates."""
+    """Handle options updates for existing config entries."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry):
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Store reference to the config entry."""
         self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None) -> FlowResult:
@@ -108,7 +123,7 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
             data_schema=self._build_schema(),
         )
 
-    def _build_schema(self):
+    def _build_schema(self) -> vol.Schema:
         """Build full schema for options form."""
 
         registry = er.async_get(self.hass)
@@ -117,16 +132,21 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
                 entity.entity_id
                 for entity in registry.entities.values()
                 if entity.entity_id.startswith("weather.")
-                and entity.entity_id != self.config_entry.entry_id  # self-reference filter
             ]
         )
 
         options = {**DEFAULT_OPTIONS, **self.config_entry.options}
         sensors = options.get(CONF_SENSORS, DEFAULT_SENSOR_OPTIONS)
 
-        schema = {
-            vol.Required(CONF_UPDATE_INTERVAL, default=options[CONF_UPDATE_INTERVAL]): vol.All(int, vol.Range(min=1, max=60)),
-            vol.Optional(CONF_FORECAST_ENTITY_ID, default=options[CONF_FORECAST_ENTITY_ID]): vol.In([""] + weather_entities),
+        schema: dict = {
+            vol.Required(
+                CONF_UPDATE_INTERVAL,
+                default=options[CONF_UPDATE_INTERVAL],
+            ): vol.All(int, vol.Range(min=1, max=60)),
+            vol.Optional(
+                CONF_FORECAST_ENTITY_ID,
+                default=options[CONF_FORECAST_ENTITY_ID],
+            ): vol.In([""] + weather_entities),
         }
 
         schema.update(build_sensor_form(sensors))
@@ -134,18 +154,18 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
 
 
 # ------------------------------------------------------------
-# CONFIG FLOW
+# CONFIG FLOW (initial setup)
 # ------------------------------------------------------------
 
 class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle initial configuration."""
+    """Handle initial configuration of PočasíMeteo."""
 
     VERSION = 4
 
     async def async_step_user(self, user_input=None) -> FlowResult:
         """First step: station name + API key."""
 
-        errors = {}
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             station_name = user_input[CONF_STATION]
@@ -200,8 +220,9 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=self._build_schema(),
         )
 
-    def _build_schema(self):
-        """Same schema as OptionsFlow."""
+    def _build_schema(self) -> vol.Schema:
+        """Build schema for initial config (mirrors OptionsFlow)."""
+
         registry = er.async_get(self.hass)
         weather_entities = sorted(
             [
@@ -211,9 +232,15 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ]
         )
 
-        schema = {
-            vol.Required(CONF_UPDATE_INTERVAL, default=DEFAULT_OPTIONS[CONF_UPDATE_INTERVAL]): vol.All(int, vol.Range(min=1, max=60)),
-            vol.Optional(CONF_FORECAST_ENTITY_ID, default=""): vol.In([""] + weather_entities),
+        schema: dict = {
+            vol.Required(
+                CONF_UPDATE_INTERVAL,
+                default=DEFAULT_OPTIONS[CONF_UPDATE_INTERVAL],
+            ): vol.All(int, vol.Range(min=1, max=60)),
+            vol.Optional(
+                CONF_FORECAST_ENTITY_ID,
+                default="",
+            ): vol.In([""] + weather_entities),
         }
 
         schema.update(build_sensor_form(DEFAULT_SENSOR_OPTIONS))
@@ -236,12 +263,3 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception as err:
             _LOGGER.error("API validation exception occurred: %s", err)
             return False
-
-
-# ------------------------------------------------------------
-# OPTIONS FLOW LINK
-# ------------------------------------------------------------
-
-@callback
-def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> PocasimeteoOptionsFlow:
-    return PocasimeteoOptionsFlow(config_entry)
