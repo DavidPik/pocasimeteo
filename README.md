@@ -1,156 +1,185 @@
-# PočasíMeteo – integrace meteostanice pro Home Assistant
+# PočasíMeteo – Home Assistent Integration
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![GitHub release](https://img.shields.io/github/release/davidpik/pocasimeteo.svg)](https://github.com/davidpik/pocasimeteo/releases)
 [![License](https://img.shields.io/github/license/davidpik/pocasimeteo.svg)](LICENSE)
 
-Integrace umožňuje připojit **meteostanici PočasíMeteo.cz** do Home Assistantu.  
-Získává **aktuální měření** přímo z API meteostanice a poskytuje:
+# PočasíMeteo – Home Assistant Integration
 
-- entitu **weather** (aktuální počasí + volitelná předpověď z jiné integrace)
-- **dynamicky generované senzory** pro všechna dostupná měření
-- podporu doplňkových čidel (Te1–Te5, Vl1–Vl5, CO₂, PM1/PM2.5…)
-- podporu volitelného forecastu z jiné weather integrace
+PočasíMeteo is a custom integration for Home Assistant that provides real‑time and historical weather data from **PočasíMeteo.cz** personal weather stations.  
+This is the **first public release** of the integration.
 
-Integrace je plně kompatibilní s HACS.
+The integration offers:
 
----
-
-## 📦 Instalace
-
-### 🔧 Instalace přes HACS (doporučeno)
-
-1. Otevřete **HACS → Integrations**
-2. Klikněte na **Custom repositories**
-3. Přidejte URL repozitáře: https://github.com/DavidPik/pocasimeteo (github.com in Bing)
-4. Typ: **Integration**
-5. Vyhledejte **PočasíMeteo**
-6. Klikněte **Install**
-
-### 🗂️ Manuální instalace
-
-Zkopírujte složku: custom_components/pocasimeteo
-Restartujte Home Assistant.
+- Live weather measurements (temperature, humidity, pressure, wind, UV, solar radiation, rainfall)
+- Automatic import of 5‑minute historical data into Home Assistant Recorder
+- Rolling 24‑hour statistics (min/max, wind direction avg/mode/variance)
+- Full sensor metadata (graph color, graph style, order, visibility)
+- Weather entity with station metadata and webcam URL
+- Dynamic discovery of additional sensors provided by the API
 
 ---
 
-## ⚙️ Konfigurace
+## Features
 
-Integrace se konfiguruje přes:
+### ✔ Real‑time weather data
+All primary and secondary sensors from PočasíMeteo API are exposed as Home Assistant sensor entities.
 
-**Nastavení → Integrace → Přidat integraci → PočasíMeteo**
+### ✔ 5‑minute history import
+The integration automatically imports historical measurements into Home Assistant Recorder, allowing graphs to show complete history even after restarts.
 
-Budete vyzváni k zadání:
+### ✔ Rolling 24‑hour statistics
+The coordinator computes:
+- min / max for numeric sensors  
+- circular statistics for wind direction:
+  - average  
+  - mode  
+  - variance  
 
-| Pole | Popis |
-|------|--------|
-| **Název stanice** | Libovolný název, který se zobrazí v HA |
-| **API klíč** | Hodnota `KlicApi` z PočasíMeteo |
-| **Interval aktualizace** | 1–30 minut |
-| **Weather entita pro předpověď (volitelné)** | Např. `weather.openweathermap` |
+### ✔ Weather entity
+A dedicated `weather` entity provides:
+- temperature  
+- pressure  
+- humidity  
+- wind speed & gust  
+- wind bearing  
+- rainfall intensity  
+- station metadata  
+- webcam URL  
 
-### 🔍 Kde získat API klíč?
+### ✔ Sensor customization
+Users can configure:
+- sensor order  
+- graph color  
+- graph style (smooth / stepped)  
+- sensor visibility  
+- update interval  
+- forecast entity  
 
-API klíč najdete v URL meteostanice: https://ext.pocasimeteo.cz/ms/?KlicApi=XXXXXXXX (ext.pocasimeteo.cz in Bing)
-
----
-
-## 🌦️ Entita Weather
-
-Integrace poskytuje entitu: weather.<název_stanice>
-
-### Obsahuje:
-
-- aktuální teplotu  
-- vlhkost  
-- tlak  
-- rychlost větru  
-- směr větru  
-- nárazy větru  
-- UV index  
-- sluneční záření  
-- srážky  
-
-### Předpověď
-
-Pokud v konfiguraci vyberete jinou weather entitu (např. OpenWeatherMap), integrace:
-
-- použije **vlastní aktuální data**
-- a **forecast převezme z vybrané entity**
+All configuration is available through the Home Assistant UI.
 
 ---
 
-## 📡 Senzory
+## Installation
 
-Integrace automaticky vytvoří senzory podle toho, co meteostanice vrací.
+### HACS (recommended)
+1. Open **HACS → Integrations**
+2. Click **Custom repositories**
+3. Add repository: https://github.com/DavidPik/pocasimeteo
+   Type: **Integration**
+4. Search for **PočasíMeteo** in HACS and install it.
+5. Restart Home Assistant.
 
-### Typické senzory:
+### Manual installation
+1. Download the repository.
+2. Copy the folder: custom_components/pocasimeteo
+   into: config/custom_components/pocasimeteo
 
-| Název | Klíč API | Jednotka |
-|-------|----------|----------|
-| Vnější teplota | `TeplotaVnejsi` | °C |
-| Vnější vlhkost | `VlhkostVnejsi` | % |
-| Tlak vzduchu | `TlakRel` | hPa |
-| Rychlost větru | `Vitr` | m/s |
-| Nárazy větru | `VitrNarazy` | m/s |
-| Směr větru | `VitrSmer` | ° |
-| Denní srážky | `SrazkyDen` | mm |
-| Intenzita srážek | `rainIntensity` | mm/5min |
-| Sluneční záření | `SlunZareni` | W/m² |
-| UV index | `UVindex` | — |
-| Vnitřní teplota | `TeplotaVnitrni` | °C |
-| Vnitřní vlhkost | `VlhkostVnitrni` | % |
-
-### Doplňková čidla (pokud existují):
-
-- `Te1`–`Te5` (teploty)
-- `Vl1`–`Vl5` (vlhkosti)
-- `Co2`
-- `Pm1`, `Pm2`
-- `VlP`, `VlP2`
-- další hodnoty podle stanice
-
-Senzory se generují **automaticky**, není nutná žádná konfigurace.
+3. Restart Home Assistant.
 
 ---
 
-## 🧪 Troubleshooting
+## Configuration
 
-### ❗ „Invalid API key“
-- API klíč je chybný nebo stanice není dostupná  
-- ověřte URL meteostanice
+### Step 1 — Add the integration
+1. Go to **Settings → Devices & Services**
+2. Click **Add Integration**
+3. Search for **PočasíMeteo**
+4. Enter:
+   - Station name  
+   - API key  
 
-### ❗ Senzory se nezobrazují
-- zkontrolujte, zda API vrací hodnoty  
-- otevřete:  
-  `https://ext.pocasimeteo.cz/ms/api/weather?KlicApi=XXXXXX`
+The API key is provided by PočasíMeteo.cz.
 
-### ❗ Forecast nefunguje
-- vybraná weather entita musí mít atribut `forecast`  
-- ověřte v Developer Tools → States
+### Step 2 — Configure sensors
+After adding the integration, you can configure:
 
----
+- Update interval  
+- Forecast entity  
+- Sensor order  
+- Sensor graph color  
+- Sensor graph style  
+- Sensor visibility  
 
-## 🧱 Struktura projektu
-
-custom_components/pocasimeteo/
-│
-├── init.py
-├── const.py
-├── coordinator.py
-├── config_flow.py
-├── weather.py
-└── sensor.py
+All settings are available via **Configure** on the integration card.
 
 ---
 
-## 📄 Licence
+## Entities
 
-MIT License  
-© 2024–2026 David Pikál
+### Weather entity
+
+weather.<station_name>
+
+Attributes include:
+- station location  
+- webcam URL  
+- update interval  
+- timestamp  
+- rainfall total  
+- sorted list of sensors with metadata  
+
+### Sensor entities
+Each sensor is exposed as:
+sensor.<station_name>_<sensor_id>
+
+Examples:
+- `sensor.pocasimeteo_teplota_vnejsi`
+- `sensor.pocasimeteo_vitr_rychlost`
+- `sensor.pocasimeteo_uv_index`
+- `sensor.pocasimeteo_srazkyden`
+
+Dynamic sensors are automatically detected and created.
 
 ---
 
+## Options
 
+The integration stores configuration in `config_entry.options`:
 
+```json
+{
+  "update_interval": 5,
+  "forecast_entity_id": "",
+  "sensors": {
+    "teplota_vnejsi": {
+      "order": 1,
+      "color": "#f59e0b",
+      "style": "smooth",
+      "visible": true
+    },
+    "vitr_rychlost": {
+      "order": 5,
+      "color": "#3b82f6",
+      "style": "stepped",
+      "visible": true
+    }
+  }
+}
+```
 
+Troubleshooting
+No data appears
+- Verify your API key is correct.
+- Check PočasíMeteo API availability.
+- Restart Home Assistant.
+
+Sensors missing
+- Some sensors appear only when the station reports them.
+- Dynamic sensors are created automatically when detected.
+
+History not visible
+- Recorder must be enabled.
+- The integration imports 5‑minute history automatically.
+
+Known limitations
+- Forecast entity is optional and depends on other weather integrations.
+- Some stations may not provide all sensor types.
+- Rainfall intensity is computed from history and may differ slightly from API values.
+
+License
+MIT License
+
+Credits
+Developed by David Pik  
+Weather data provided by PočasíMeteo.cz
