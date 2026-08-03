@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     DOMAIN,
@@ -23,7 +22,6 @@ from .config_flow import PocasimeteoOptionsFlow
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[str] = ["weather", "sensor"]
-
 
 # ------------------------------------------------------------
 # MIGRACE OPTIONS
@@ -74,7 +72,6 @@ def _migrate_options(entry: ConfigEntry) -> dict:
 
     return new_options
 
-
 # ------------------------------------------------------------
 # MIGRACE ENTRY VERSION
 # ------------------------------------------------------------
@@ -82,9 +79,7 @@ def _migrate_options(entry: ConfigEntry) -> dict:
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """
     Migrate old config entries to the latest version.
-
     VERSION in config_flow.py = 4
-    → pokud entry.version < 4, provedeme migraci options a nastavíme verzi na 4.
     """
 
     _LOGGER.debug(
@@ -93,16 +88,14 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.version,
     )
 
-    # Migrace pouze pokud je starší verze
     if entry.version < 4:
         migrated_options = _migrate_options(entry)
 
         hass.config_entries.async_update_entry(
             entry,
             options=migrated_options,
+            version=4,
         )
-
-        hass.config_entries.async_update_entry(entry, version=4)
 
         _LOGGER.debug(
             "pocasimeteo: migration completed for entry %s → version 4",
@@ -110,7 +103,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     return True
-
 
 # ------------------------------------------------------------
 # SETUP ENTRY
@@ -153,7 +145,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
-
 # ------------------------------------------------------------
 # UNLOAD / RELOAD
 # ------------------------------------------------------------
@@ -169,12 +160,11 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await async_unload_entry(hass, entry)
     await async_setup_entry(hass, entry)
 
-
 # ------------------------------------------------------------
-# OPTIONS FLOW
+# OPTIONS FLOW REGISTRATION (CRITICAL FIX)
 # ------------------------------------------------------------
 
 @callback
-def async_get_options_flow(config_entry):
+def async_get_options_flow(config_entry: ConfigEntry):
+    """Return the options flow handler."""
     return PocasimeteoOptionsFlow(config_entry)
-
