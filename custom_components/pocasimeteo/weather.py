@@ -42,7 +42,7 @@ class PočasíMeteoWeather(WeatherEntity):
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name=self._coordinator.station_metadata.get("station_name") or "PočasíMeteo",
+            name=self._entry.data.get("station_name") or "PočasíMeteo",
             manufacturer="PočasíMeteo",
             model="Meteostanice",
         )
@@ -102,13 +102,20 @@ class PočasíMeteoWeather(WeatherEntity):
             attrs["srazky_den"] = raw.get("SrazkyDen", 0)
 
         # připravíme metadata pro kartu (sensors pole)
+        station = self._entry.data.get("station_name")
         sensors_meta = []
         for sid, payload in self._coordinator.sensors_payload.items():
             meta = payload["meta"]
+
+            # pokud entita neexistuje v hass.states, přeskočíme ji
+            entity_id = f"sensor.{station}_{sid}"
+            if entity_id not in self.hass.states:
+                continue
+            
             sensors_meta.append(
                 {
                     "id": sid,
-                    "entity_id": f"sensor.{self._entry.entry_id}_{sid}",
+                    "entity_id": entity_id,
                     "type": meta.get("type", "secondary"),
                     "order": meta.get("order", 999),
                     "visible": meta.get("visible", True),
