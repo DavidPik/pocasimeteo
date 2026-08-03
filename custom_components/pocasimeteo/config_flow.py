@@ -121,6 +121,7 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
 
 class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Initial configuration."""
+    VERSION = 4
 
     async def async_step_user(self, user_input=None) -> FlowResult:
         errors = {}
