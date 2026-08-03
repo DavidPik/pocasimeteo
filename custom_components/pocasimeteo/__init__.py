@@ -102,7 +102,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             options=migrated_options,
         )
 
-        entry.version = 4
+        hass.config_entries.async_update_entry(entry, version=4)
 
         _LOGGER.debug(
             "pocasimeteo: migration completed for entry %s → version 4",
