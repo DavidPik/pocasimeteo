@@ -51,21 +51,18 @@ class PocasimeteoWeather(WeatherEntity):
         )
 
     #
-    # Stav počasí (condition)
+    # === STANDARD HA WEATHERENTITY API ===
     #
+
     @property
     def condition(self) -> str | None:
         """Odvozený stav počasí podle senzorů."""
         sensors = self._coordinator.sensors_payload
 
-        # 1) Déšť
         rain = sensors.get("intenzita_srazek", {}).get("value")
         if rain is not None and rain > 0:
-            if rain > 2:
-                return "pouring"
-            return "rainy"
+            return "pouring" if rain > 2 else "rainy"
 
-        # 2) Sluneční záření
         solar = sensors.get("slunecni_zareni", {}).get("value")
         if solar is not None:
             if solar > 300:
@@ -73,126 +70,115 @@ class PocasimeteoWeather(WeatherEntity):
             if solar > 100:
                 return "partlycloudy"
 
-        # 3) UV index
         uv = sensors.get("uv_index", {}).get("value")
         if uv is not None and uv > 5:
             return "sunny"
 
-        # 4) Vítr
         wind = sensors.get("vitr_rychlost", {}).get("value")
         if wind is not None and wind > 10:
             return "windy"
 
-        # 5) Default
         return "cloudy"
 
-    #
-    # Hlavní hodnoty – nové WeatherEntity API (native_* + *_unit)
-    #
     @property
-    def native_temperature(self) -> float | None:
-        """Aktuální venkovní teplota."""
+    def temperature(self) -> float | None:
         sensor = self._coordinator.sensors_payload.get("teplota_venkovni")
-        if not sensor:
-            return None
-        return sensor.get("value")
+        return sensor.get("value") if sensor else None
 
     @property
-    def temperature_unit(self) -> str:
-        """Jednotka teploty."""
-        # uložená v options/config flow
-        return self._entry.options.get("temperature_unit", "°C")
-
-    @property
-    def native_pressure(self) -> float | None:
-        """Relativní tlak."""
+    def pressure(self) -> float | None:
         sensor = self._coordinator.sensors_payload.get("tlak_relativni")
-        if not sensor:
-            return None
-        return sensor.get("value")
-
-    @property
-    def pressure_unit(self) -> str:
-        """Jednotka tlaku."""
-        return self._entry.options.get("barometric_pressure_unit", "hPa")
+        return sensor.get("value") if sensor else None
 
     @property
     def humidity(self) -> float | None:
-        """Relativní vlhkost venkovní."""
         sensor = self._coordinator.sensors_payload.get("vlhkost_venkovni")
-        if not sensor:
-            return None
-        return sensor.get("value")
+        return sensor.get("value") if sensor else None
 
     @property
-    def native_wind_speed(self) -> float | None:
-        """Rychlost větru."""
+    def wind_speed(self) -> float | None:
         sensor = self._coordinator.sensors_payload.get("vitr_rychlost")
-        if not sensor:
-            return None
-        return sensor.get("value")
+        return sensor.get("value") if sensor else None
 
     @property
-    def native_wind_gust(self) -> float | None:
-        """Nárazy větru."""
+    def wind_gust(self) -> float | None:
         sensor = self._coordinator.sensors_payload.get("vitr_narazy")
-        if not sensor:
-            return None
-        return sensor.get("value")
+        return sensor.get("value") if sensor else None
 
     @property
-    def native_wind_bearing(self) -> float | None:
-        """Směr větru (°)."""
+    def wind_bearing(self) -> float | None:
         sensor = self._coordinator.sensors_payload.get("vitr_smer")
-        if not sensor:
-            return None
-        return sensor.get("value")
+        return sensor.get("value") if sensor else None
+
+    #
+    # === STANDARD HA WEATHERENTITY – JEDNOTKY ===
+    #
+
+    @property
+    def temperature_unit(self) -> str:
+        return "°C"
+
+    @property
+    def pressure_unit(self) -> str:
+        return "hPa"
 
     @property
     def wind_speed_unit(self) -> str:
-        """Jednotka rychlosti větru."""
-        return self._entry.options.get("wind_speed_unit", "km/h")
+        return "m/s"
 
     @property
     def visibility_unit(self) -> str:
-        """Jednotka viditelnosti."""
-        return self._entry.options.get("visibility_unit", "km")
+        return "km"
 
     @property
     def precipitation_unit(self) -> str:
-        """Jednotka srážek."""
-        return self._entry.options.get("precipitation_unit", "mm")
+        return "mm"
 
     #
-    # Extra atributy pro kartu a metadata stanice
+    # === KARTA: extra_state_attributes – vše níže je přidáno kvůli frontendové kartě ===
     #
+
     @property
     def extra_state_attributes(self) -> dict:
         """Doplňkové atributy pro frontendovou kartu PočasíMeteo."""
-        attrs: dict = dict(self._coordinator.station_metadata or {})
 
-        # timestamp měření
+        attrs: dict = dict(self._coordinator.station_metadata)
+
+        # === KARTA: karta potřebuje timestamp ===
         attrs["timestamp"] = datetime.now().isoformat()
 
-        # srážky za den (API klíč SrazkyDen)
+        # === KARTA: karta potřebuje srážky za den ===
         raw = self._coordinator.data
         if isinstance(raw, dict):
             attrs["srazky_den"] = raw.get("SrazkyDen", 0)
 
-        # název stanice (pro jistotu i zde)
-        station = self._entry.data.get("station_name") or attrs.get("station_name")
-        if station:
-            attrs["station_name"] = station
+        # === KARTA: karta potřebuje hodnoty přímo v atributech weather entity ===
+        attrs["temperature"] = self.temperature
+        attrs["pressure"] = self.pressure
+        attrs["humidity"] = self.humidity
+        attrs["wind_speed"] = self.wind_speed
+        attrs["wind_gust"] = self.wind_gust
+        attrs["wind_bearing"] = self.wind_bearing
 
-        # připravíme metadata pro kartu (sensors pole)
+        # === KARTA: karta potřebuje doplňkové hodnoty ze senzorů ===
+        sensors = self._coordinator.sensors_payload
+        attrs["precipitation"] = sensors.get("intenzita_srazek", {}).get("value")
+        attrs["solar_radiation"] = sensors.get("slunecni_zareni", {}).get("value")
+        attrs["uv_index"] = sensors.get("uv_index", {}).get("value")
+
+        # === KARTA: karta používá update_interval ===
+        attrs["update_interval"] = 5
+
+        # === KARTA: karta potřebuje seznam senzorů s entity_id ===
+        station = self._entry.data.get("station_name") or ""
+        station_id = station.lower()
+
         sensors_meta: list[dict] = []
-        for sid, payload in self._coordinator.sensors_payload.items():
+        for sid, payload in sensors.items():
             meta = payload.get("meta", {})
 
-            # pokud entita neexistuje v hass.states, přeskočíme ji
-            # entity_id v HA je ve tvaru sensor.gar632_teplota_venkovni atd.
-            entity_id = f"sensor.{station}_{sid}" if station else None
-            if not entity_id or self.hass.states.get(entity_id) is None:
+            entity_id = f"sensor.{station_id}_{sid}"
+            if self.hass.states.get(entity_id) is None:
                 continue
 
             sensors_meta.append(
