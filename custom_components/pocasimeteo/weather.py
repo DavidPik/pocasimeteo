@@ -175,28 +175,51 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         # sensor entit má načítat historii pro vykreslení jednotlivých dlaždic grafů.
         sensors_meta: list[dict] = []
         
-        # ARCHITEKTURA FRONTENDU: Získáme přesný prefix stanice (např. "gar632") 
-        # přímo z vlastního názvu této weather entity (weather.gar632 -> gar632)
+        # ARCHITEKTURA FRONTENDU: Sestavíme seznam senzorů okamžitě bez čekání na stavový registr HA.
+        # Tím karta získá strukturu grafů ihned při prvním vykreslení stránky.
         station_prefix = self.entity_id.split(".")[1]
         sensors_meta: list[dict] = []
         
-        for sid, payload in self.coordinator.sensors_payload.items():
-            meta = payload.get("meta", {})
+        # 1. Nejprve projdeme všechny senzory, které integrace nativně zná z const.py a options
+        for sid, meta in SENSOR_DEFINITIONS.items():
+            # Načteme uživatelské nastavení (viditelnost, pořadí) z options, nebo výchozí z const.py
+            opts = self._entry.options.get(CONF_SENSORS, {}).get(sid, {})
             
-            # Oprava provázání: Sestavíme reálné ID, pod kterým senzory v HA aktuálně žijí
-            entity_id = f"sensor.{station_prefix}_{sid}"
-            
-            # Ověříme, zda entita v HA opravdu existuje a má platný stav
-            if self.hass.states.get(entity_id) is None:
+            # Pokud uživatel v nastavení integrace senzor skryl, na kartu ho neposíláme
+            if not opts.get("visible", meta.get("type") == "primary" or True):
                 continue
 
+            entity_id = f"sensor.{station_prefix}_{sid}"
+            sensors_meta.append({
+                "id": sid,
+                "entity_id": entity_id,
+                "type": meta.get("type", "secondary"),
+                "order": opts.get("order", meta.get("order", 999)),
+                "visible": True,
+            })
+
+        # 2. Dynamicky doplníme nová čidla z API, která nejsou v základní definici const.py
+        for sid, payload in self.coordinator.sensors_payload.items():
+            # Přeskočíme ty, které jsme již přidali v prvním kroku
+            if any(s["id"] == sid for s in sensors_meta):
+                continue
+                
+            meta = payload.get("meta", {})
+            if not meta.get("visible", True):
+                continue
+
+            entity_id = f"sensor.{station_prefix}_{sid}"
             sensors_meta.append({
                 "id": sid,
                 "entity_id": entity_id,
                 "type": meta.get("type", "secondary"),
                 "order": meta.get("order", 999),
-                "visible": meta.get("visible", True),
+                "visible": True,
             })
+
+        # Seřadíme seznam podle definovaného pořadí (order)
+        sensors_meta.sort(key=lambda x: x["order"])
 
         attrs["sensors"] = sensors_meta
         return attrs
+
