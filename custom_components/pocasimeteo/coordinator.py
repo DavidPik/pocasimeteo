@@ -221,25 +221,23 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if isinstance(raw, dict) and "Zprava" in raw:
             raise UpdateFailed(f"PočasíMeteo API Error: {raw['Zprava']}")
 
-        # Zpracování metadat stanice
+        # Zpracování metadat stanice a extrakce payloadu počasí
         if isinstance(raw, list) and len(raw) > 0:
+            # První prvek pole obsahuje metadata stanice
             meta_payload = raw[0]
             if isinstance(meta_payload, dict):
                 self.station_metadata["station_name"] = self.entry.data.get(CONF_STATION)
-                # ARCHITEKTURA FRONTENDU: Klíč sjednocen na 'lokalita_stanice' dle požadavků karty
                 self.station_metadata["lokalita_stanice"] = meta_payload.get("LokalitaStanice")
                 if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
+            # Extrakce samotného počasí z pole
             if len(raw) > 1 and isinstance(raw[1], dict) and "Datum" in raw[1]:
                 raw = raw[1]
             elif isinstance(raw[0], dict) and "Datum" in raw[0]:
                 raw = raw[0]
             else:
                 raise UpdateFailed("API response structure valid, but weather payload missing")
-
-        if not isinstance(raw, dict):
-            raise UpdateFailed("Invalid API response format")
 
         # Import historie do DB (vyplnění mezer po výpadku)
         history_payload = None
