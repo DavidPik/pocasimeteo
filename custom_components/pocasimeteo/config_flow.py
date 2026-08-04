@@ -131,6 +131,7 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(step_id="init", data_schema=self._build_schema())
 
     def _build_schema(self):
+        """Sestaví opravené schéma formuláře bez rizika vyvolání chyby 500."""
         registry = er.async_get(self.hass)
         weather_entities = sorted(
             entity.entity_id
@@ -138,22 +139,31 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
             if entity.entity_id.startswith("weather.")
         )
 
+        # Sloučíme výchozí nastavení s reálně uloženými options integrace
         options = {**DEFAULT_OPTIONS, **self.config_entry.options}
-        sensors = options.get(CONF_SENSORS, DEFAULT_SENSOR_OPTIONS)
+        
+        # OPRAVA 500: Správně vytáhneme vnitřní slovník senzorů z klíče CONF_SENSORS,
+        # nikoli celý kořenový objekt options, čímž scelíme datovou strukturu pro build_sensor_form
+        sensors_config = options.get(CONF_SENSORS, DEFAULT_SENSOR_OPTIONS)
 
-        # ARCHITEKTURA: Vytáhneme si aktuální běžící data z koordinátoru pro zobrazení dynamických čidel
+        # Bezpečné načtení dat z běžícího koordinátoru na pozadí
         store = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id, {})
-        coordinator = store.get("coordinator")
+        coordinator = store.get("coordinator") if isinstance(store, dict) else None
         coordinator_sensors = coordinator.sensors_payload if coordinator else None
 
+        # Ověříme, zda aktuálně vybraná forecast entita stále existuje v seznamu, aby volba vol.In neselhala
+        current_forecast = options.get(CONF_FORECAST_ENTITY_ID, "")
+        if current_forecast and current_forecast not in weather_entities:
+            weather_entities.append(current_forecast)
+
         schema = {
-            vol.Required(CONF_UPDATE_INTERVAL, default=options[CONF_UPDATE_INTERVAL]): vol.All(int, vol.Range(min=1, max=60)),
-            vol.Optional(CONF_FORECAST_ENTITY_ID, default=options[CONF_FORECAST_ENTITY_ID]): vol.In([""] + weather_entities),
+            vol.Required(CONF_UPDATE_INTERVAL, default=options.get(CONF_UPDATE_INTERVAL, 5)): vol.All(int, vol.Range(min=1, max=60)),
+            vol.Optional(CONF_FORECAST_ENTITY_ID, default=current_forecast): vol.In([""] + weather_entities),
         }
 
-        schema.update(build_sensor_form(sensors, coordinator_sensors))
+        # Do schématu bezpečně předáme vyseparovaný slovník senzorů
+        schema.update(build_sensor_form(sensors_config, coordinator_sensors))
         return vol.Schema(schema)
-
 
 # ------------------------------------------------------------
 # CONFIG FLOW (initial setup)
