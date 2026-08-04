@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from homeassistant.components.weather import WeatherEntity
 from homeassistant.config_entries import ConfigEntry
@@ -12,8 +13,6 @@ from homeassistant.helpers.entity import DeviceInfo
 
 from .const import DOMAIN
 from .coordinator import PocasimeteoDataUpdateCoordinator
-
-from datetime import datetime
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,13 +26,17 @@ async def async_setup_entry(
     store = hass.data[DOMAIN][entry.entry_id]
     coordinator: PocasimeteoDataUpdateCoordinator = store["coordinator"]
 
-    async_add_entities([PočasíMeteoWeather(coordinator, entry)])
+    async_add_entities([PocasimeteoWeather(coordinator, entry)])
 
 
-class PočasíMeteoWeather(WeatherEntity):
+class PocasimeteoWeather(WeatherEntity):
     """Hlavní weather entita pro PočasíMeteo."""
 
-    def __init__(self, coordinator: PocasimeteoDataUpdateCoordinator, entry: ConfigEntry) -> None:
+    def __init__(
+        self,
+        coordinator: PocasimeteoDataUpdateCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
         self._coordinator = coordinator
         self._entry = entry
 
@@ -47,8 +50,11 @@ class PočasíMeteoWeather(WeatherEntity):
             model="Meteostanice",
         )
 
+    #
+    # Stav počasí (condition)
+    #
     @property
-    def condition(self):
+    def condition(self) -> str | None:
         """Odvozený stav počasí podle senzorů."""
         sensors = self._coordinator.sensors_payload
 
@@ -80,51 +86,90 @@ class PočasíMeteoWeather(WeatherEntity):
         # 5) Default
         return "cloudy"
 
+    #
+    # Hlavní hodnoty – nové WeatherEntity API (native_* + *_unit)
+    #
     @property
-    def temperature(self):
-        sensor = self._coordinator.sensors_payload.get("teplota_vnejsi")
+    def native_temperature(self) -> float | None:
+        """Aktuální venkovní teplota."""
+        sensor = self._coordinator.sensors_payload.get("teplota_venkovni")
         if not sensor:
             return None
         return sensor.get("value")
 
     @property
-    def pressure(self):
+    def temperature_unit(self) -> str:
+        """Jednotka teploty."""
+        # uložená v options/config flow
+        return self._entry.options.get("temperature_unit", "°C")
+
+    @property
+    def native_pressure(self) -> float | None:
+        """Relativní tlak."""
         sensor = self._coordinator.sensors_payload.get("tlak_relativni")
         if not sensor:
             return None
         return sensor.get("value")
 
     @property
-    def humidity(self):
-        sensor = self._coordinator.sensors_payload.get("vlhkost_vnejsi")
+    def pressure_unit(self) -> str:
+        """Jednotka tlaku."""
+        return self._entry.options.get("barometric_pressure_unit", "hPa")
+
+    @property
+    def humidity(self) -> float | None:
+        """Relativní vlhkost venkovní."""
+        sensor = self._coordinator.sensors_payload.get("vlhkost_venkovni")
         if not sensor:
             return None
         return sensor.get("value")
 
     @property
-    def wind_speed(self):
+    def native_wind_speed(self) -> float | None:
+        """Rychlost větru."""
         sensor = self._coordinator.sensors_payload.get("vitr_rychlost")
         if not sensor:
             return None
         return sensor.get("value")
 
     @property
-    def wind_gust(self):
+    def native_wind_gust(self) -> float | None:
+        """Nárazy větru."""
         sensor = self._coordinator.sensors_payload.get("vitr_narazy")
         if not sensor:
             return None
         return sensor.get("value")
 
     @property
-    def wind_bearing(self):
+    def native_wind_bearing(self) -> float | None:
+        """Směr větru (°)."""
         sensor = self._coordinator.sensors_payload.get("vitr_smer")
         if not sensor:
             return None
         return sensor.get("value")
 
     @property
-    def extra_state_attributes(self):
-        attrs = dict(self._coordinator.station_metadata)
+    def wind_speed_unit(self) -> str:
+        """Jednotka rychlosti větru."""
+        return self._entry.options.get("wind_speed_unit", "km/h")
+
+    @property
+    def visibility_unit(self) -> str:
+        """Jednotka viditelnosti."""
+        return self._entry.options.get("visibility_unit", "km")
+
+    @property
+    def precipitation_unit(self) -> str:
+        """Jednotka srážek."""
+        return self._entry.options.get("precipitation_unit", "mm")
+
+    #
+    # Extra atributy pro kartu a metadata stanice
+    #
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Doplňkové atributy pro frontendovou kartu PočasíMeteo."""
+        attrs: dict = dict(self._coordinator.station_metadata or {})
 
         # timestamp měření
         attrs["timestamp"] = datetime.now().isoformat()
@@ -134,17 +179,22 @@ class PočasíMeteoWeather(WeatherEntity):
         if isinstance(raw, dict):
             attrs["srazky_den"] = raw.get("SrazkyDen", 0)
 
+        # název stanice (pro jistotu i zde)
+        station = self._entry.data.get("station_name") or attrs.get("station_name")
+        if station:
+            attrs["station_name"] = station
+
         # připravíme metadata pro kartu (sensors pole)
-        station = self._entry.data.get("station_name")
-        sensors_meta = []
+        sensors_meta: list[dict] = []
         for sid, payload in self._coordinator.sensors_payload.items():
-            meta = payload["meta"]
+            meta = payload.get("meta", {})
 
             # pokud entita neexistuje v hass.states, přeskočíme ji
-            entity_id = f"sensor.{station}_{sid}"
-            if self.hass.states.get(entity_id) is None:
+            # entity_id v HA je ve tvaru sensor.gar632_teplota_venkovni atd.
+            entity_id = f"sensor.{station}_{sid}" if station else None
+            if not entity_id or self.hass.states.get(entity_id) is None:
                 continue
-            
+
             sensors_meta.append(
                 {
                     "id": sid,
