@@ -1,185 +1,121 @@
-# PočasíMeteo – Home Assistent Integration
-
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-[![GitHub release](https://img.shields.io/github/release/davidpik/pocasimeteo.svg)](https://github.com/davidpik/pocasimeteo/releases)
-[![License](https://img.shields.io/github/license/davidpik/pocasimeteo.svg)](LICENSE)
-
 # PočasíMeteo – Home Assistant Integration
 
-PočasíMeteo is a custom integration for Home Assistant that provides real‑time and historical weather data from **PočasíMeteo.cz** personal weather stations.  
-This is the **first public release** of the integration.
+[![hacs_badge](https://shields.io)](https://github.com)
+[![GitHub release](https://shields.io)](https://github.com)
+[![License](https://shields.io)](LICENSE)
 
-The integration offers:
+PočasíMeteo je zakázková integrace pro Home Assistant (plně optimalizovaná pro hardware Home Assistant Green), která zajišťuje stahování dat v reálném čase i doplňování historie z osobních meteostanic registrovaných na portálu **PočasíMeteo.cz**.
 
-- Live weather measurements (temperature, humidity, pressure, wind, UV, solar radiation, rainfall)
-- Automatic import of 5‑minute historical data into Home Assistant Recorder
-- Rolling 24‑hour statistics (min/max, wind direction avg/mode/variance)
-- Full sensor metadata (graph color, graph style, order, visibility)
-- Weather entity with station metadata and webcam URL
-- Dynamic discovery of additional sensors provided by the API
+Tato integrace úzce spolupracuje s dedikovanou frontendovou kartou `pocasimeteo-card.js` a tvoří s ní ucelený meteorologický dashboard.
 
 ---
 
-## Features
+## Hlavní funkce
 
-### ✔ Real‑time weather data
-All primary and secondary sensors from PočasíMeteo API are exposed as Home Assistant sensor entities.
+### ✔️ Stabilní asynchronní architektura
+Stahování dat a složité výpočty kruhových statistik probíhají v chráněném koordinátoru na pozadí, což šetří procesor a RAM paměť vašeho Home Assistenta.
 
-### ✔ 5‑minute history import
-The integration automatically imports historical measurements into Home Assistant Recorder, allowing graphs to show complete history even after restarts.
+### ✔️ Automatické doplňování historie (Recorder)
+Při výpadku sítě nebo restartu Home Assistenta integrace automaticky analyzuje 5minutovou historii posílanou z API a bezpečně dopíše chybějící body do databáze (`Recorder`). Zápis je plně kompatibilní s moderním databázovým schématem HA a zabraňuje poškození integrity tabulek.
 
-### ✔ Rolling 24‑hour statistics
-The coordinator computes:
-- min / max for numeric sensors  
-- circular statistics for wind direction:
-  - average  
-  - mode  
-  - variance  
+### ✔️ Klouzavé 24hodinové statistiky v RAM
+Koordinátor neustále udržuje přesné 24h klouzavé okno dat, ze kterého počítá:
+- **Minima a maxima** pro všechny číselné senzory.
+- **Kruhové statistiky větru** pro senzor směru větru (Vektorový průměrný směr, Převládající modus a Úhlový rozptyl/Variance). Tyto atributy jsou okamžitě dostupné pro vykreslení větrné růžice na frontendové kartě.
 
-### ✔ Weather entity
-A dedicated `weather` entity provides:
-- temperature  
-- pressure  
-- humidity  
-- wind speed & gust  
-- wind bearing  
-- rainfall intensity  
-- station metadata  
-- webcam URL  
+### ✔️ Pokročilá správa vzhledu senzorů (Options Flow)
+Přímo v uživatelském nastavení integrace (tlačítko **Nastavit**) lze spravovat vzhled pro **Lovelace kartu**:
+- Pořadí zobrazení grafů (`order`)
+- Barva čáry grafu v HEX formátu (`color`)
+- Styl grafu – plynulý/čárový vs. schodovitý (`smooth` / `stepped`)
+- Viditelnost čidla (`visible`)
 
-### ✔ Sensor customization
-Users can configure:
-- sensor order  
-- graph color  
-- graph style (smooth / stepped)  
-- sensor visibility  
-- update interval  
-- forecast entity  
-
-All configuration is available through the Home Assistant UI.
+### ✔️ Plná podpora pro dynamická čidla
+Pokud k meteostanici připojíte dodatečné bastlené senzory (např. čidlo v bazénu, půdní vlhkoměr), integrace je za běhu detekuje a vytvoří pro ně entity v HA. Tyto entity lze následně plně konfigurovat, měnit jejich styl, barvu nebo jejich konfigurační záznam z paměti trvale smazat, pokud čidlo odpojíte.
 
 ---
 
-## Installation
+## Instalace
 
-### HACS (recommended)
-1. Open **HACS → Integrations**
-2. Click **Custom repositories**
-3. Add repository: https://github.com/DavidPik/pocasimeteo
-   Type: **Integration**
-4. Search for **PočasíMeteo** in HACS and install it.
-5. Restart Home Assistant.
+### 1. Přes HACS (Doporučeno)
+1. V levém menu otevřete **HACS → Integrace**
+2. V pravém horním rohu klikněte na tři tečky a zvolte **Uživatelské repozitáře** (Custom repositories)
+3. Vložte URL adresu: `https://github.com`
+4. Jako Kategorii zvolte **Integrace** a klikněte na **Přidat**
+5. Vyhledejte integraci **PočasíMeteo** v HACS katalogu a stáhněte ji.
+6. **Restartujte Home Assistant.**
 
-### Manual installation
-1. Download the repository.
-2. Copy the folder: custom_components/pocasimeteo
-   into: config/custom_components/pocasimeteo
-
-3. Restart Home Assistant.
+### 2. Manuální instalace
+1. Stáhněte si zdrojové kódy z tohoto repozitáře.
+2. Zkopírujte složku `custom_components/pocasimeteo` do vašeho adresáře `config/custom_components/` v Home Assistantovi.
+3. **Restartujte Home Assistant.**
 
 ---
 
-## Configuration
+## Prvotní nastavení
 
-### Step 1 — Add the integration
-1. Go to **Settings → Devices & Services**
-2. Click **Add Integration**
-3. Search for **PočasíMeteo**
-4. Enter:
-   - Station name  
-   - API key  
-
-The API key is provided by PočasíMeteo.cz.
-
-### Step 2 — Configure sensors
-After adding the integration, you can configure:
-
-- Update interval  
-- Forecast entity  
-- Sensor order  
-- Sensor graph color  
-- Sensor graph style  
-- Sensor visibility  
-
-All settings are available via **Configure** on the integration card.
+1. Přejděte do **Nastavení → Zařízení a služby**
+2. Vpravo dole klikněte na **Přidat integraci**
+3. Vyhledejte **PočasíMeteo**
+4. Zadejte libovolný **Název stanice** (např. *GAR632*) a váš unikátní **API klíč** z portálu Pocasimeteo.cz.
+5. V dalším kroku průvodce se vám zobrazí tovární konfigurace senzorů, kterou potvrďte.
 
 ---
 
-## Entities
+## Struktura entit a ID
 
-### Weather entity
+Integrace přísně dbá na čistou jmennou sémantiku. ID entit se generují na základě systémového slugu názvu vaší stanice (převedeno na malá písmena, mezery nahrazeny podtržítkem).
 
-weather.<station_name>
+### Hlavní weather entita
+Vytvoří se jedna hlavní entita:
+- `weather.<název_stanice>` (např. `weather.gar632`)
 
-Attributes include:
-- station location  
-- webcam URL  
-- update interval  
-- timestamp  
-- rainfall total  
-- sorted list of sensors with metadata  
+Tato entita publikuje standardizované HA stavy (teplota, tlak, vlhkost, rychlost a směr větru) a minimální sadu extra atributů schválených pro frontendovou kartu (lokalita stanice, URL webkamery, srážky za den a dynamické pole `sensors` s metadaty pro bleskové načtení grafů).
 
-### Sensor entities
-Each sensor is exposed as:
-sensor.<station_name>_<sensor_id>
+### Senzorové entity
+Všechny senzory jsou dostupné jako samostatné entity ve formátu:
+- `sensor.<název_stanice>_<sensor_id>`
 
-Examples:
-- `sensor.pocasimeteo_teplota_vnejsi`
-- `sensor.pocasimeteo_vitr_rychlost`
-- `sensor.pocasimeteo_uv_index`
-- `sensor.pocasimeteo_srazkyden`
-
-Dynamic sensors are automatically detected and created.
+Příklady vygenerovaných entit:
+- `sensor.gar632_teplota_vnejsi` – Venkovní teplota
+- `sensor.gar632_vlhkost_vnejsi` – Venkovní vlhkost
+- `sensor.gar632_tlak_relativni` – Relativní tlak vzduchu
+- `sensor.gar632_intenzita_srazek` – Intenzita srážek (mm/h)
+- `sensor.gar632_vitr_smer` – Směr větru (obsahuje 24h rolling atributy průměru, modu a rozptylu)
 
 ---
 
-## Options
+## Konfigurace za běhu (Options Flow)
 
-The integration stores configuration in `config_entry.options`:
+Kdykoliv kliknete v rozhraní Home Assistenta na tlačítko **Nastavit** u karty PočasíMeteo, otevře se pokročilý konfigurační formulář, kde můžete měnit:
+- **Interval aktualizace:** (1 až 60 minut)
+- **Entita předpovědi:** Možnost propojit integraci s libovolnou jinou weather entitou v domě (např. Met.no, CHMI), ze které bude frontendová karta číst budoucí dny. Systém z bezpečnostních důvodů automaticky filtruje a skrývá sebe sama, aby nedošlo k zacyklení předpovědi.
+- **Vzhled jednotlivých čidel:** Pro každé čidlo (statické i dynamicky objevené) můžete určit řazení, barvu a styl.
+- **Smazání konfigurace:** U dynamických čidel se zobrazí zaškrtávací políčko pro trvalé odstranění jejich konfiguračních dat z paměti integrace.
 
-```json
-{
-  "update_interval": 5,
-  "forecast_entity_id": "",
-  "sensors": {
-    "teplota_vnejsi": {
-      "order": 1,
-      "color": "#f59e0b",
-      "style": "smooth",
-      "visible": true
-    },
-    "vitr_rychlost": {
-      "order": 5,
-      "color": "#3b82f6",
-      "style": "stepped",
-      "visible": true
-    }
-  }
-}
-```
+---
 
-## Troubleshooting
-### No data appears
-- Verify your API key is correct.
-- Check PočasíMeteo API availability.
-- Restart Home Assistant.
+## Spolupráce s Lovelace kartou
 
-### Sensors missing
-- Some sensors appear only when the station reports them.
-- Dynamic sensors are created automatically when detected.
+Tato integrace byla navržena pro maximální synergii s kartou **`pocasimeteo-card`**. Karta se díky předávanému poli metadat v weather entitě dokáže bleskově vykreslit bez čekání a paralelně si na pozadí dotáhne 24hodinovou historii z Recorderu pro každé čidlo zvlášť.
 
-### History not visible
-- Recorder must be enabled.
-- The integration imports 5‑minute history automatically.
+---
 
-## Known limitations
-- Forecast entity is optional and depends on other weather integrations.
-- Some stations may not provide all sensor types.
-- Rainfall intensity is computed from history and may differ slightly from API values.
+## Řešení problémů
 
-## License
-MIT License
+### Senzory jsou ve stavu `unavailable`
+- Zkontrolujte funkčnost API klíče.
+- Pokud jste integraci aktualizovali ze starší vývojové verze, Home Assistant může v registru držet stará ID entit (např. s koncovkou `_venkovni` namísto nového `_vnejsi`). Přejděte v HA do *Nastavení -> Zařízení a služby -> PočasíMeteo*, rozklikněte daný senzor a manuálně v jeho nastavení upravte ID entity na správný tvar (např. `sensor.gar632_teplota_vnejsi`).
 
-## Credits
-Developed by David Pikálek  
-Weather data provided by PočasíMeteo.cz
+### Grafy na kartě jsou prázdné
+- Ujistěte se, že máte v Home Assistantovi zapnutou komponentu `recorder` (ukládání historie).
+- Po prvním přidání integrace trvá několik minut, než databáze nasbírá dostatek bodů pro vykreslení spojité čáry grafu.
+
+---
+
+## Licence
+Tento projekt je publikován pod licencí MIT.
+
+## Kredity
+- **Vývojář:** David Pikálek
+- **Poskytovatel meteorologických dat:** [PočasíMeteo.cz](https://pocasimeteo.cz)
