@@ -175,11 +175,16 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         # sensor entit má načítat historii pro vykreslení jednotlivých dlaždic grafů.
         sensors_meta: list[dict] = []
         
+        # ARCHITEKTURA FRONTENDU: Získáme přesný prefix stanice (např. "gar632") 
+        # přímo z vlastního názvu této weather entity (weather.gar632 -> gar632)
+        station_prefix = self.entity_id.split(".")[1]
+        sensors_meta: list[dict] = []
+        
         for sid, payload in self.coordinator.sensors_payload.items():
             meta = payload.get("meta", {})
             
-            # Sestavíme přesné entity_id generované platformou sensor (shodné s sensor.py)
-            entity_id = f"sensor.pocasimeteo_{sid}"
+            # Oprava provázání: Sestavíme reálné ID, pod kterým senzory v HA aktuálně žijí
+            entity_id = f"sensor.{station_slug}_{sid}"
             
             # Ověříme, zda entita v HA opravdu existuje a má platný stav
             if self.hass.states.get(entity_id) is None:
