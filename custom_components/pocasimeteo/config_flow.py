@@ -163,6 +163,14 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Initial configuration při přidání integrace."""
     VERSION = 4
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> PocasimeteoOptionsFlow:
+        """ARCHITEKTURA HA: Oficiální registrace toku možností nastavení (Options Flow)."""
+        return PocasimeteoOptionsFlow(config_entry)
+    
     async def async_step_user(self, user_input=None) -> FlowResult:
         errors = {}
 
