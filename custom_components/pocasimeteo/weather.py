@@ -184,7 +184,7 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
             meta = payload.get("meta", {})
             
             # Oprava provázání: Sestavíme reálné ID, pod kterým senzory v HA aktuálně žijí
-            entity_id = f"sensor.{station_slug}_{sid}"
+            entity_id = f"sensor.{station_prefix}_{sid}"
             
             # Ověříme, zda entita v HA opravdu existuje a má platný stav
             if self.hass.states.get(entity_id) is None:
