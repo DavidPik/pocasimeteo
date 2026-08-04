@@ -27,7 +27,7 @@ ATTR_DAILY_RAIN = "srazky_den"
 # API endpoint – správná verze pro coordinator
 # ------------------------------------------------------------
 
-API_URL_BASE = "https://pocasimeteo.cz"
+API_URL_BASE = "https://ext.pocasimeteo.cz/ms/api/weather"
 
 DEFAULT_UPDATE_INTERVAL_MINUTES = 5
 DEFAULT_UPDATE_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL_MINUTES)
