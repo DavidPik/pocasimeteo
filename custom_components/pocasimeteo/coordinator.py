@@ -156,9 +156,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
                     continue
 
-                # Spočítáme station_slug jako prefix názvu senzoru:
-                station_slug = (self.entry.data.get("station_name") or "").lower().replace(" ", "_")
-                entity_id = f"sensor.{station_slug}_{key.lower()}"
+                # Získáme prefix z oficiálního názvu instance integrace v HA
+                station_prefix = self.entry.title.lower().replace(" ", "_")
+                entity_id = f"sensor.{station_prefix}_{key.lower()}"
 
                 try:
                     v = float(value)
