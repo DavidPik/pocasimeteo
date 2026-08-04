@@ -74,9 +74,11 @@ class PočasíMeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], S
         self._sensor_id = sensor_id
         self._entry = entry
 
-        # Počítáme správné pojmenování senzorů
-        station_slug = (coordinator.config_entry.data.get("station_name") or "").lower().replace(" ", "_")
-        self.entity_id = f"sensor.{station_slug}_{sensor_id}"
+        # Prefix odvodíme z ID config entry integrace v malých písmenech
+        # Pokud entry_id obsahuje pomlčky/unikátní kód, HA interně pro entity_id používá title nebo název domény.
+        # Nejrobustnější je vzít unikátní ID z registru entit, nebo použít název z title záznamu:
+        station_prefix = entry.title.lower().replace(" ", "_")
+        self.entity_id = f"sensor.{station_prefix}_{sensor_id}"
         
         self._attr_unique_id = f"{entry.entry_id}_{sensor_id}"
         self._attr_name = meta.get("name", sensor_id)
