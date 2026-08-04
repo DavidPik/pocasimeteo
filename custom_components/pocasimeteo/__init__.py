@@ -44,7 +44,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ARCHITEKTURA HA: Registrace posluchače na změnu options.
     # Pokud uživatel v budoucnu klikne na 'Nastavit' a změní konfiguraci,
     # tento listener automaticky zachytí změnu a integraci bezpečně restartuje.
-    entry.async_on_unload(entry.add_to_updates_listener(async_reload_entry))
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     
     return True
 
