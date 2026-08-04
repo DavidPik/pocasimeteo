@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import async_timeout
+import asyncio  # ODCHYLKA: Používáme standardní asyncio namísto deprecovaného async_timeout
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -33,13 +33,17 @@ _LOGGER = logging.getLogger(__name__)
 # ------------------------------------------------------------
 
 def build_sensor_form(options_sensors: dict) -> dict:
+    """Sestaví dynamický formulář pro konfiguraci vzhledu prvků karty."""
     schema = {}
 
     for sensor_id, meta in DEFAULT_SENSOR_OPTIONS.items():
         current = options_sensors.get(sensor_id, meta)
 
+        # ARCHITEKTURA FRONTENDU: Umožňujeme uživateli přímo v integraci definovat pořadí,
+        # barvu a styl vykreslení grafu (plynulý vs. schodovitý). Tato metadata si frontendová
+        # karta přečte z extra_state_attributes jednotlivých senzorů.
         schema.update({
-            vol.Required(f"{sensor_id}_order", default=current["order"]): vol.All(int, vol.Range(min=1, max=999)),
+            vol.Required(f"{sensor_id}_order", default=current["order"]): int,
             vol.Required(f"{sensor_id}_color", default=current["color"]): str,
             vol.Required(f"{sensor_id}_style", default=current["style"]): vol.In([GRAPH_STYLE_SMOOTH, GRAPH_STYLE_STEPPED]),
             vol.Required(f"{sensor_id}_visible", default=current["visible"]): bool,
@@ -48,12 +52,8 @@ def build_sensor_form(options_sensors: dict) -> dict:
     return schema
 
 
-def validate_sensor_order(user_input: dict) -> bool:
-    orders = [user_input[f"{sensor_id}_order"] for sensor_id in DEFAULT_SENSOR_OPTIONS]
-    return sorted(orders) == list(range(1, len(orders) + 1))
-
-
 def convert_user_input_to_options(user_input: dict) -> dict:
+    """Zpracuje vstupy z formuláře do struktury uložené v konfiguraci."""
     sensors = {
         sensor_id: {
             "order": user_input[f"{sensor_id}_order"],
@@ -76,20 +76,13 @@ def convert_user_input_to_options(user_input: dict) -> dict:
 # ------------------------------------------------------------
 
 class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
-    """Handle options updates."""
+    """Správa nastavení integrace za běhu (Nastavení -> Integrace -> Nastavit)."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry):
         self.config_entry = config_entry
 
     async def async_step_init(self, user_input=None) -> FlowResult:
         if user_input is not None:
-            if not validate_sensor_order(user_input):
-                return self.async_show_form(
-                    step_id="init",
-                    data_schema=self._build_schema(),
-                    errors={"base": "invalid_sensor_order"},
-                )
-
             new_options = convert_user_input_to_options(user_input)
             return self.async_create_entry(title="", data=new_options)
 
@@ -120,7 +113,7 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
 # ------------------------------------------------------------
 
 class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Initial configuration."""
+    """Prvotní nastavení integrace při přidávání do Home Assistenta."""
     VERSION = 4
 
     async def async_step_user(self, user_input=None) -> FlowResult:
@@ -151,13 +144,6 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_config(self, user_input=None) -> FlowResult:
         if user_input is not None:
-            if not validate_sensor_order(user_input):
-                return self.async_show_form(
-                    step_id="config",
-                    data_schema=self._build_schema(),
-                    errors={"base": "invalid_sensor_order"},
-                )
-
             options = convert_user_input_to_options(user_input)
 
             return self.async_create_entry(
@@ -195,7 +181,7 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             session = aiohttp_client.async_get_clientsession(hass)
-            async with async_timeout.timeout(10):
+            async with asyncio.timeout(10):  # ODCHYLKA: Moderní asynchronní timeout
                 async with session.get(url) as resp:
                     if resp.status != 200:
                         return False
