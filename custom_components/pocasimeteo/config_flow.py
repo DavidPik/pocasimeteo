@@ -28,7 +28,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-
 # ------------------------------------------------------------
 # SHARED FORM LOGIC
 # ------------------------------------------------------------
@@ -75,7 +74,6 @@ def build_sensor_form(options_sensors: dict, coordinator_sensors: dict = None) -
 
     return schema
 
-
 def convert_user_input_to_options(user_input: dict) -> dict:
     """Převádí vstupy z formuláře a filtruje smazané dynamické senzory."""
     sensors = {}
@@ -112,17 +110,12 @@ def convert_user_input_to_options(user_input: dict) -> dict:
         CONF_SENSORS: sensors,
     }
 
-
 # ------------------------------------------------------------
 # OPTIONS FLOW
 # ------------------------------------------------------------
 
 class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
     """Handle options updates."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """ARCHITEKTURA HA: Bezpečné předání konfigurace do nadřazené třídy."""
-        super().__init__(config_entry)
 
     async def async_step_init(self, user_input=None) -> FlowResult:
         if user_input is not None:
