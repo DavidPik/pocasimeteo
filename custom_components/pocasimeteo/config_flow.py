@@ -118,10 +118,11 @@ def convert_user_input_to_options(user_input: dict) -> dict:
 # ------------------------------------------------------------
 
 class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
-    """Handle options updates za běhu integrace."""
+    """Handle options updates."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry):
-        self.config_entry = config_entry
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """ARCHITEKTURA HA: Bezpečné předání konfigurace do nadřazené třídy."""
+        super().__init__(config_entry)
 
     async def async_step_init(self, user_input=None) -> FlowResult:
         if user_input is not None:
