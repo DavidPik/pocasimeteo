@@ -3,6 +3,7 @@
 from __future__ import annotations
 from datetime import timedelta
 from typing import Any
+from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
 
 DOMAIN = "pocasimeteo"
 DEFAULT_NAME = "PočasíMeteo"
@@ -17,11 +18,16 @@ CONF_UPDATE_INTERVAL = "update_interval"
 CONF_FORECAST_ENTITY_ID = "forecast_entity_id"
 CONF_SENSORS = "sensors"
 
+# Atributy pro sjednocení s frontendem
+ATTR_STATION_LOCATION = "lokalita_stanice"
+ATTR_API_TIMESTAMP = "timestamp"
+ATTR_DAILY_RAIN = "srazky_den"
+
 # ------------------------------------------------------------
 # API endpoint – správná verze pro coordinator
 # ------------------------------------------------------------
 
-API_URL_BASE = "https://ext.pocasimeteo.cz/ms/api/weather"
+API_URL_BASE = "https://pocasimeteo.cz"
 
 DEFAULT_UPDATE_INTERVAL_MINUTES = 5
 DEFAULT_UPDATE_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL_MINUTES)
@@ -42,7 +48,7 @@ STEPPED_SENSOR_IDS = [
 ]
 
 # ------------------------------------------------------------
-# Definice senzorů (kompletní metadata)
+# Definice senzorů (kompletní metadata sjednocená s weather)
 # ------------------------------------------------------------
 
 SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
@@ -50,8 +56,8 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "Teplota venkovní",
         "unit": "°C",
         "icon": "mdi:thermometer",
-        "device_class": "temperature",
-        "state_class": "measurement",
+        "device_class": SensorDeviceClass.TEMPERATURE,
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "primary",
         "order": 1,
         "api_key": "TeplotaVnejsi",
@@ -61,8 +67,8 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "Vlhkost venkovní",
         "unit": "%",
         "icon": "mdi:water-percent",
-        "device_class": "humidity",
-        "state_class": "measurement",
+        "device_class": SensorDeviceClass.HUMIDITY,
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "primary",
         "order": 2,
         "api_key": "VlhkostVnejsi",
@@ -72,8 +78,8 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "Tlak relativní",
         "unit": "hPa",
         "icon": "mdi:gauge",
-        "device_class": None,
-        "state_class": "measurement",
+        "device_class": SensorDeviceClass.PRESSURE,
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "primary",
         "order": 3,
         "api_key": "TlakRel",
@@ -83,8 +89,8 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "Intenzita srážek",
         "unit": "mm/h",
         "icon": "mdi:weather-rainy",
-        "device_class": None,
-        "state_class": "measurement",
+        "device_class": SensorDeviceClass.PRECIPITATION_INTENSITY,
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "primary",
         "order": 4,
         "api_key": "SrazkyIntenzita",
@@ -94,8 +100,8 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "Vítr rychlost",
         "unit": "m/s",
         "icon": "mdi:weather-windy",
-        "device_class": None,
-        "state_class": "measurement",
+        "device_class": SensorDeviceClass.WIND_SPEED,
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "primary",
         "order": 5,
         "api_key": "Vitr",
@@ -105,8 +111,8 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "Vítr nárazy",
         "unit": "m/s",
         "icon": "mdi:weather-windy",
-        "device_class": None,
-        "state_class": "measurement",
+        "device_class": SensorDeviceClass.WIND_SPEED,
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "primary",
         "order": 6,
         "api_key": "VitrNarazy",
@@ -116,8 +122,8 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "Vítr směr",
         "unit": "°",
         "icon": "mdi:compass",
-        "device_class": None,
-        "state_class": "measurement",
+        "device_class": None,  # Směr větru nemá nativní číselnou device class, řeší se stupni
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "primary",
         "order": 7,
         "api_key": "VitrSmer",
@@ -127,8 +133,8 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "Sluneční záření",
         "unit": "W/m²",
         "icon": "mdi:white-balance-sunny",
-        "device_class": None,
-        "state_class": "measurement",
+        "device_class": SensorDeviceClass.IRRADIANCE,
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "primary",
         "order": 8,
         "api_key": "SlunZareni",
@@ -139,7 +145,7 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "unit": None,
         "icon": "mdi:sun-wireless",
         "device_class": None,
-        "state_class": "measurement",
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "primary",
         "order": 9,
         "api_key": "UVindex",
@@ -149,8 +155,8 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "Teplota vnitřní",
         "unit": "°C",
         "icon": "mdi:thermometer",
-        "device_class": "temperature",
-        "state_class": "measurement",
+        "device_class": SensorDeviceClass.TEMPERATURE,
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "secondary",
         "order": 100,
         "api_key": "TeplotaVnitrni",
@@ -160,8 +166,8 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "Vlhkost vnitřní",
         "unit": "%",
         "icon": "mdi:water-percent",
-        "device_class": "humidity",
-        "state_class": "measurement",
+        "device_class": SensorDeviceClass.HUMIDITY,
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "secondary",
         "order": 101,
         "api_key": "VlhkostVnitrni",
@@ -202,7 +208,7 @@ def get_dynamic_sensor_meta(api_key: str) -> dict:
         "unit": None,
         "icon": "mdi:chart-line",
         "device_class": None,
-        "state_class": "measurement",
+        "state_class": SensorStateClass.MEASUREMENT,
         "type": "secondary",
         "order": 999,
         "color": "#3b82f6",
