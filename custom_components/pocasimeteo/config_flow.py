@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import asyncio  # ODCHYLKA: Používáme standardní asyncio namísto deprecovaného async_timeout
+import asyncio
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import aiohttp_client
 from homeassistant.helpers import entity_registry as er
@@ -21,6 +21,7 @@ from .const import (
     CONF_SENSORS,
     DEFAULT_OPTIONS,
     DEFAULT_SENSOR_OPTIONS,
+    SENSOR_DEFINITIONS,
     GRAPH_STYLE_SMOOTH,
     GRAPH_STYLE_STEPPED,
 )
@@ -32,37 +33,78 @@ _LOGGER = logging.getLogger(__name__)
 # SHARED FORM LOGIC
 # ------------------------------------------------------------
 
-def build_sensor_form(options_sensors: dict) -> dict:
-    """Sestaví dynamický formulář pro konfiguraci vzhledu prvků karty."""
+def build_sensor_form(options_sensors: dict, coordinator_sensors: dict = None) -> dict:
+    """
+    Sestaví formulář pro konfiguraci vzhledu.
+    Defaultní senzory drží typ pevně, u dynamických je typ fixován na secondary/dynamic.
+    """
     schema = {}
+    
+    # Spojíme známé statické senzory s těmi, které jsou reálně uloženy nebo nalezeny v koordinátoru
+    all_sensor_ids = set(DEFAULT_SENSOR_OPTIONS.keys()) | set(options_sensors.keys())
+    if coordinator_sensors:
+        all_sensor_ids |= set(coordinator_sensors.keys())
 
-    for sensor_id, meta in DEFAULT_SENSOR_OPTIONS.items():
-        current = options_sensors.get(sensor_id, meta)
+    for sensor_id in sorted(all_sensor_ids):
+        # 1. KROK: Zjistíme výchozí hodnoty (tovární nastavení) podle toho, o jaký typ čidla jde
+        if sensor_id in SENSOR_DEFINITIONS:
+            meta = SENSOR_DEFINITIONS[sensor_id]
+            fallback_order = meta.get("order", 999)
+            fallback_color = meta.get("color", "#3b82f6")
+            fallback_style = GRAPH_STYLE_STEPPED if sensor_id in ["vitr_rychlost", "vitr_narazy", "vitr_smer", "intenzita_srazek"] else GRAPH_STYLE_SMOOTH
+        else:
+            fallback_order = 999
+            fallback_color = "#3b82f6"
+            fallback_style = GRAPH_STYLE_SMOOTH
 
-        # ARCHITEKTURA FRONTENDU: Umožňujeme uživateli přímo v integraci definovat pořadí,
-        # barvu a styl vykreslení grafu (plynulý vs. schodovitý). Tato metadata si frontendová
-        # karta přečte z extra_state_attributes jednotlivých senzorů.
+        current = options_sensors.get(sensor_id, {})
+
+        # 2. KROK: Do formuláře přidáme standardní políčka (řazení, barva, styl grafu, viditelnost)
         schema.update({
-            vol.Required(f"{sensor_id}_order", default=current["order"]): int,
-            vol.Required(f"{sensor_id}_color", default=current["color"]): str,
-            vol.Required(f"{sensor_id}_style", default=current["style"]): vol.In([GRAPH_STYLE_SMOOTH, GRAPH_STYLE_STEPPED]),
-            vol.Required(f"{sensor_id}_visible", default=current["visible"]): bool,
+            vol.Required(f"{sensor_id}_order", default=current.get("order", fallback_order)): int,
+            vol.Required(f"{sensor_id}_color", default=current.get("color", fallback_color)): str,
+            vol.Required(f"{sensor_id}_style", default=current.get("style", fallback_style)): vol.In([GRAPH_STYLE_SMOOTH, GRAPH_STYLE_STEPPED]),
+            vol.Required(f"{sensor_id}_visible", default=current.get("visible", True)): bool,
         })
+        
+        # 3. KROK: Pouze pokud jde o dynamické čidlo (není v const.py), dovolíme uživateli ho smazat
+        if sensor_id not in SENSOR_DEFINITIONS:
+            schema.update({
+                vol.Optional(f"{sensor_id}_delete_config", default=False): bool
+            })
 
     return schema
 
 
 def convert_user_input_to_options(user_input: dict) -> dict:
-    """Zpracuje vstupy z formuláře do struktury uložené v konfiguraci."""
-    sensors = {
-        sensor_id: {
+    """Převádí vstupy z formuláře a filtruje smazané dynamické senzory."""
+    sensors = {}
+    
+    # Extrahujeme unikátní sensor_id ze zadaných polí formuláře
+    all_sensor_ids = set()
+    for key in user_input.keys():
+        if key.endswith("_visible"):
+            sensor_id = key[:-8]
+            all_sensor_ids.add(sensor_id)
+
+    for sensor_id in all_sensor_ids:
+        # Pokud uživatel zaškrtl smazání konfigurace dynamického čidla, zahodíme ho
+        if user_input.get(f"{sensor_id}_delete_config", False):
+            continue
+            
+        # Zjistíme typ: výchozí senzory ho mají z const.py, dynamické jsou vždy secondary
+        if sensor_id in SENSOR_DEFINITIONS:
+            sensor_type = SENSOR_DEFINITIONS[sensor_id].get("type", "primary")
+        else:
+            sensor_type = "secondary"
+
+        sensors[sensor_id] = {
+            "type": sensor_type,
             "order": user_input[f"{sensor_id}_order"],
             "color": user_input[f"{sensor_id}_color"],
             "style": user_input[f"{sensor_id}_style"],
             "visible": user_input[f"{sensor_id}_visible"],
         }
-        for sensor_id in DEFAULT_SENSOR_OPTIONS
-    }
 
     return {
         CONF_UPDATE_INTERVAL: user_input[CONF_UPDATE_INTERVAL],
@@ -76,7 +118,7 @@ def convert_user_input_to_options(user_input: dict) -> dict:
 # ------------------------------------------------------------
 
 class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
-    """Správa nastavení integrace za běhu (Nastavení -> Integrace -> Nastavit)."""
+    """Handle options updates za běhu integrace."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry):
         self.config_entry = config_entry
@@ -99,12 +141,17 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
         options = {**DEFAULT_OPTIONS, **self.config_entry.options}
         sensors = options.get(CONF_SENSORS, DEFAULT_SENSOR_OPTIONS)
 
+        # ARCHITEKTURA: Vytáhneme si aktuální běžící data z koordinátoru pro zobrazení dynamických čidel
+        store = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id, {})
+        coordinator = store.get("coordinator")
+        coordinator_sensors = coordinator.sensors_payload if coordinator else None
+
         schema = {
             vol.Required(CONF_UPDATE_INTERVAL, default=options[CONF_UPDATE_INTERVAL]): vol.All(int, vol.Range(min=1, max=60)),
             vol.Optional(CONF_FORECAST_ENTITY_ID, default=options[CONF_FORECAST_ENTITY_ID]): vol.In([""] + weather_entities),
         }
 
-        schema.update(build_sensor_form(sensors))
+        schema.update(build_sensor_form(sensors, coordinator_sensors))
         return vol.Schema(schema)
 
 
@@ -113,7 +160,7 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
 # ------------------------------------------------------------
 
 class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Prvotní nastavení integrace při přidávání do Home Assistenta."""
+    """Initial configuration při přidání integrace."""
     VERSION = 4
 
     async def async_step_user(self, user_input=None) -> FlowResult:
@@ -181,7 +228,7 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             session = aiohttp_client.async_get_clientsession(hass)
-            async with asyncio.timeout(10):  # ODCHYLKA: Moderní asynchronní timeout
+            async with asyncio.timeout(10):
                 async with session.get(url) as resp:
                     if resp.status != 200:
                         return False
