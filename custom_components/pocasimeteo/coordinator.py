@@ -156,7 +156,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
                     continue
 
-                entity_id = f"sensor.pocasimeteo_{key.lower()}"
+                # Spočítáme station_slug jako prefix názvu senzoru:
+                station_slug = (self.entry.data.get("station_name") or "").lower().replace(" ", "_")
+                entity_id = f"sensor.{station_slug}_{key.lower()}"
 
                 try:
                     v = float(value)
