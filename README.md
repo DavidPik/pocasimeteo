@@ -1,8 +1,8 @@
 # PočasíMeteo – Home Assistant Integration
 
-[![hacs_badge](https://shields.io)](https://github.com)
-[![GitHub release](https://shields.io)](https://github.com)
-[![License](https://shields.io)](LICENSE)
+[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![GitHub release](https://img.shields.io/github/release/davidpik/pocasimeteo.svg)](https://github.com/davidpik/pocasimeteo/releases)
+[![License](https://img.shields.io/github/license/davidpik/pocasimeteo.svg)](LICENSE)
 
 PočasíMeteo je zakázková integrace pro Home Assistant (plně optimalizovaná pro hardware Home Assistant Green), která zajišťuje stahování dat v reálném čase i doplňování historie z osobních meteostanic registrovaných na portálu **PočasíMeteo.cz**.
 
