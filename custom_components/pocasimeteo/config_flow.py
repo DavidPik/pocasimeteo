@@ -125,12 +125,18 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(step_id="init", data_schema=self._build_schema())
 
     def _build_schema(self):
-        """Sestaví opravené schéma formuláře bez rizika vyvolání chyby 500."""
+        """Sestaví opravené schéma formuláře s vyloučením vlastní weather entity."""
         registry = er.async_get(self.hass)
+        
+        # ARCHITEKTURA: Zjistíme přesný prefix naší stanice (např. "gar632")
+        station_prefix = (self.config_entry.title or "").lower().replace(" ", "_")
+        own_weather_entity = f"weather.{station_prefix}"
+
+        # Vyfiltrujeme všechny weather entity v systému kromě té naší vlastní
         weather_entities = sorted(
             entity.entity_id
             for entity in registry.entities.values()
-            if entity.entity_id.startswith("weather.")
+            if entity.entity_id.startswith("weather.") and entity.entity_id != own_weather_entity
         )
 
         # Sloučíme výchozí nastavení s reálně uloženými options integrace
@@ -218,22 +224,27 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="config", data_schema=self._build_schema())
 
     def _build_schema(self):
-        """Sestaví čisté výchozí schéma pro prvotní konfiguraci integrace."""
+        """Sestaví čisté výchozí schéma s vyloučením budoucí vlastní weather entity."""
         registry = er.async_get(self.hass)
+        
+        # ARCHITEKTURA: Odvodíme budoucí název naší entity z textu zadaného v prvním kroku
+        station_prefix = (getattr(self, "_station_name", "") or "").lower().replace(" ", "_")
+        own_weather_entity = f"weather.{station_prefix}"
+
+        # Vyfiltrujeme všechny weather entity v systému kromě té naší budoucí vlastní
         weather_entities = sorted(
             entity.entity_id
             for entity in registry.entities.values()
-            if entity.entity_id.startswith("weather.")
+            if entity.entity_id.startswith("weather.") and entity.entity_id != own_weather_entity
         )
 
-        # ARCHITEKTURA HA: Při prvním přidání integrace nepoužíváme self.config_entry,
-        # ale stavíme formulář čistě z výchozích továrních konstant integrace.
+        # ARCHITEKTURA HA: Při prvním přidání integrace stavíme formulář z továrních konstant
         schema = {
             vol.Required(CONF_UPDATE_INTERVAL, default=DEFAULT_OPTIONS[CONF_UPDATE_INTERVAL]): vol.All(int, vol.Range(min=1, max=60)),
             vol.Optional(CONF_FORECAST_ENTITY_ID, default=""): vol.In([""] + weather_entities),
         }
 
-        # Sestavíme formulář z výchozích možností senzorů, koordinátor v této fázi ještě neběží
+        # Sestavíme formulář z výchozích možností senzorů
         schema.update(build_sensor_form(DEFAULT_SENSOR_OPTIONS))
         return vol.Schema(schema)
 
