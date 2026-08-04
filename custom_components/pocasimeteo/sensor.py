@@ -74,9 +74,9 @@ class PočasíMeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], S
         self._sensor_id = sensor_id
         self._entry = entry
 
-        # FIX PROVÁZÁNÍ ID ENTIT: Natvrdo vnutí systému přesnou adresu entity,
-        # kterou očekává jak weather.py, tak i vaše frontendová karta.
-        self.entity_id = f"sensor.pocasimeteo_{sensor_id}"
+        # Počítáme správné pojmenování senzorů
+        station_slug = (coordinator.config_entry.data.get("station_name") or "").lower().replace(" ", "_")
+        self.entity_id = f"sensor.{station_slug}_{sensor_id}"
         
         self._attr_unique_id = f"{entry.entry_id}_{sensor_id}"
         self._attr_name = meta.get("name", sensor_id)
