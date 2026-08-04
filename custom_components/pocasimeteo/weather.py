@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from homeassistant.components.weather import WeatherEntity
+from homeassistant.components.weather import WeatherEntity, WeatherEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_STATION, ATTR_STATION_LOCATION, ATTR_API_TIMESTAMP, ATTR_DAILY_RAIN
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,35 +30,40 @@ async def async_setup_entry(
     async_add_entities([PocasimeteoWeather(coordinator, entry)])
 
 
-class PocasimeteoWeather(WeatherEntity):
-    """Hlavní weather entita pro PočasíMeteo."""
+class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], WeatherEntity):
+    """Hlavní weather entita pro PočasíMeteo provázaná s koordinátorem."""
 
     def __init__(
         self,
         coordinator: PocasimeteoDataUpdateCoordinator,
         entry: ConfigEntry,
     ) -> None:
-        self._coordinator = coordinator
+        """Inicializace weather entity a provázání se zařízením."""
+        super().__init__(coordinator)
         self._entry = entry
 
         self._attr_unique_id = entry.entry_id
-        self._attr_name = self._entry.data.get("station_name") or "PočasíMeteo"
+        self._attr_name = self._entry.data.get(CONF_STATION) or "PočasíMeteo"
+
+        # Deklarujeme podporu pro asynchronní předpověď (forecast), pokud se v budoucnu napojí
+        self._attr_supported_features = WeatherEntityFeature.FORECAST_DAILY
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name=self._entry.data.get("station_name") or "PočasíMeteo",
+            name=self._entry.data.get(CONF_STATION) or "PočasíMeteo",
             manufacturer="PočasíMeteo",
             model="Meteostanice",
         )
 
     #
     # === STANDARD HA WEATHERENTITY API ===
+    # Tyto vlastnosti Home Assistant automaticky publikuje ve stavovém objektu na frontend.
     #
 
     @property
     def condition(self) -> str | None:
-        """Odvozený stav počasí podle senzorů."""
-        sensors = self._coordinator.sensors_payload
+        """Odvozený stav počasí vypočtený z aktuálních hodnot senzorů."""
+        sensors = self.coordinator.sensors_payload
 
         rain = sensors.get("intenzita_srazek", {}).get("value")
         if rain is not None and rain > 0:
@@ -81,37 +87,43 @@ class PocasimeteoWeather(WeatherEntity):
         return "cloudy"
 
     @property
-    def temperature(self) -> float | None:
-        sensor = self._coordinator.sensors_payload.get("teplota_venkovni")
+    def native_temperature(self) -> float | None:
+        """Vrací venkovní teplotu (sjednoceno s názvy v const.py)."""
+        sensor = self.coordinator.sensors_payload.get("teplota_vnejsi")
         return sensor.get("value") if sensor else None
 
     @property
-    def pressure(self) -> float | None:
-        sensor = self._coordinator.sensors_payload.get("tlak_relativni")
+    def native_pressure(self) -> float | None:
+        """Vrací relativní tlak vzduchu."""
+        sensor = self.coordinator.sensors_payload.get("tlak_relativni")
         return sensor.get("value") if sensor else None
 
     @property
     def humidity(self) -> float | None:
-        sensor = self._coordinator.sensors_payload.get("vlhkost_venkovni")
+        """Vrací venkovní vlhkost (sjednoceno s názvy v const.py)."""
+        sensor = self.coordinator.sensors_payload.get("vlhkost_vnejsi")
         return sensor.get("value") if sensor else None
 
     @property
-    def wind_speed(self) -> float | None:
-        sensor = self._coordinator.sensors_payload.get("vitr_rychlost")
+    def native_wind_speed(self) -> float | None:
+        """Vrací rychlost větru."""
+        sensor = self.coordinator.sensors_payload.get("vitr_rychlost")
         return sensor.get("value") if sensor else None
 
     @property
-    def wind_gust(self) -> float | None:
-        sensor = self._coordinator.sensors_payload.get("vitr_narazy")
+    def native_wind_gust(self) -> float | None:
+        """Vrací nárazy větru."""
+        sensor = self.coordinator.sensors_payload.get("vitr_narazy")
         return sensor.get("value") if sensor else None
 
     @property
     def wind_bearing(self) -> float | None:
-        sensor = self._coordinator.sensors_payload.get("vitr_smer")
+        """Vrací směr větru ve stupních."""
+        sensor = self.coordinator.sensors_payload.get("vitr_smer")
         return sensor.get("value") if sensor else None
 
     #
-    # === STANDARD HA WEATHERENTITY – JEDNOTKY ===
+    # === STANDARD HA WEATHERENTITY – NATIVNÍ JEDNOTKY ===
     #
 
     @property
@@ -135,62 +147,51 @@ class PocasimeteoWeather(WeatherEntity):
         return "mm"
 
     #
-    # === KARTA: extra_state_attributes – vše níže je přidáno kvůli frontendové kartě ===
+    # === EXTRA ATRIBUTY SCHVÁLENÉ PRO FRONTENDOVOU KARTU ===
     #
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Doplňkové atributy pro frontendovou kartu PočasíMeteo."""
+        """Doplňkové minimální atributy, které standardní weather neumí předat."""
+        attrs: dict = {}
 
-        attrs: dict = dict(self._coordinator.station_metadata)
+        # 1. Název lokality vrácený ze serveru a čas poslední aktualizace API
+        if ATTR_STATION_LOCATION in self.coordinator.station_metadata:
+            attrs[ATTR_STATION_LOCATION] = self.coordinator.station_metadata[ATTR_STATION_LOCATION]
+        
+        attrs[ATTR_API_TIMESTAMP] = datetime.now().isoformat()
 
-        # === KARTA: karta potřebuje timestamp ===
-        attrs["timestamp"] = datetime.now().isoformat()
+        # 2. Celkové srážky za aktuální den získané bezpečně z koordinátoru
+        if hasattr(self.coordinator, "data") and isinstance(self.coordinator.data, dict):
+            attrs[ATTR_DAILY_RAIN] = self.coordinator.data.get("SrazkyDen", 0)
+        else:
+            attrs[ATTR_DAILY_RAIN] = 0
 
-        # === KARTA: karta potřebuje srážky za den ===
-        raw = self._coordinator.data
-        if isinstance(raw, dict):
-            attrs["srazky_den"] = raw.get("SrazkyDen", 0)
-
-        # === KARTA: karta potřebuje hodnoty přímo v atributech weather entity ===
-        attrs["temperature"] = self.temperature
-        attrs["pressure"] = self.pressure
-        attrs["humidity"] = self.humidity
-        attrs["wind_speed"] = self.wind_speed
-        attrs["wind_gust"] = self.wind_gust
-        attrs["wind_bearing"] = self.wind_bearing
-
-        # === KARTA: karta potřebuje doplňkové hodnoty ze senzorů ===
-        sensors = self._coordinator.sensors_payload
-        attrs["precipitation"] = sensors.get("intenzita_srazek", {}).get("value")
-        attrs["solar_radiation"] = sensors.get("slunecni_zareni", {}).get("value")
-        attrs["uv_index"] = sensors.get("uv_index", {}).get("value")
-
-        # === KARTA: karta používá update_interval ===
+        # Ponecháme základní update_interval pro stabilitu
         attrs["update_interval"] = 5
 
-        # === KARTA: karta potřebuje seznam senzorů s entity_id ===
-        station = self._entry.data.get("station_name") or ""
-        station_id = station.lower()
-
+        # 3. Dynamický seznam senzorů s jejich reálnými sjednocenými entity_id v HA systému.
+        # ARCHITEKTURA FRONTENDU: Karta prochází toto pole a okamžitě ví, ze kterých 
+        # sensor entit má načítat historii pro vykreslení jednotlivých dlaždic grafů.
         sensors_meta: list[dict] = []
-        for sid, payload in sensors.items():
+        
+        for sid, payload in self.coordinator.sensors_payload.items():
             meta = payload.get("meta", {})
-
-            entity_id = f"sensor.{station_id}_{sid}"
+            
+            # Sestavíme přesné entity_id generované platformou sensor (shodné s sensor.py)
+            entity_id = f"sensor.pocasimeteo_{sid}"
+            
+            # Ověříme, zda entita v HA opravdu existuje a má platný stav
             if self.hass.states.get(entity_id) is None:
                 continue
 
-            sensors_meta.append(
-                {
-                    "id": sid,
-                    "entity_id": entity_id,
-                    "type": meta.get("type", "secondary"),
-                    "order": meta.get("order", 999),
-                    "visible": meta.get("visible", True),
-                }
-            )
+            sensors_meta.append({
+                "id": sid,
+                "entity_id": entity_id,
+                "type": meta.get("type", "secondary"),
+                "order": meta.get("order", 999),
+                "visible": meta.get("visible", True),
+            })
 
         attrs["sensors"] = sensors_meta
-
         return attrs
