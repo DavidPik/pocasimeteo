@@ -12,7 +12,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, CONF_STATION, ATTR_STATION_LOCATION, ATTR_API_TIMESTAMP, ATTR_DAILY_RAIN
+from .const import DOMAIN, CONF_STATION, ATTR_STATION_LOCATION, ATTR_API_TIMESTAMP, ATTR_DAILY_RAIN, CONF_SENSORS, SENSOR_DEFINITIONS
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
