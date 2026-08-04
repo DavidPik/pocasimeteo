@@ -173,7 +173,7 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> PocasimeteoOptionsFlow:
         """ARCHITEKTURA HA: Oficiální registrace toku možností nastavení (Options Flow)."""
-        return PocasimeteoOptionsFlow(config_entry)
+        return PocasimeteoOptionsFlow()
     
     async def async_step_user(self, user_input=None) -> FlowResult:
         errors = {}
@@ -218,6 +218,7 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="config", data_schema=self._build_schema())
 
     def _build_schema(self):
+        """Sestaví čisté výchozí schéma pro prvotní konfiguraci integrace."""
         registry = er.async_get(self.hass)
         weather_entities = sorted(
             entity.entity_id
@@ -225,11 +226,14 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if entity.entity_id.startswith("weather.")
         )
 
+        # ARCHITEKTURA HA: Při prvním přidání integrace nepoužíváme self.config_entry,
+        # ale stavíme formulář čistě z výchozích továrních konstant integrace.
         schema = {
             vol.Required(CONF_UPDATE_INTERVAL, default=DEFAULT_OPTIONS[CONF_UPDATE_INTERVAL]): vol.All(int, vol.Range(min=1, max=60)),
             vol.Optional(CONF_FORECAST_ENTITY_ID, default=""): vol.In([""] + weather_entities),
         }
 
+        # Sestavíme formulář z výchozích možností senzorů, koordinátor v této fázi ještě neběží
         schema.update(build_sensor_form(DEFAULT_SENSOR_OPTIONS))
         return vol.Schema(schema)
 
