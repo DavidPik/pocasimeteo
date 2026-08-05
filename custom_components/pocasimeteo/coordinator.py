@@ -144,7 +144,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if sorted_measurements:
             self._latest_rain_intensity = sorted_measurements[-1].get("SrazkyIntenzita", 0.0)
 
-        # Samotný bezpečný import do DB
+        # Samotný bezpečný import do DB se sjednocením klíčů podle const.py
+        station_prefix = self.entry.title.lower().replace(" ", "_")
+
         for m in sorted_measurements:
             ts_raw = m.get("Datum")
             if not ts_raw:
@@ -152,13 +154,28 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
 
+            # Převodní slovník z API klíčů na interní ID senzorů z const.py
+            api_to_internal_mapping = {
+                "TeplotaVnejsi": "teplota_vnejsi",
+                "VlhkostVnejsi": "vlhkost_vnejsi",
+                "TlakRel": "tlak_relativni",
+                "SrazkyIntenzita": "intenzita_srazek",
+                "Vitr": "vitr_rychlost",
+                "VitrNarazy": "vitr_narazy",
+                "VitrSmer": "vitr_smer",
+                "SlunZareni": "slunecni_zareni",
+                "UVindex": "uv_index",
+                "TeplotaVnitrni": "teplota_vnitrni",
+                "VlhkostVnitrni": "vlhkost_vnitrni"
+            }
+
             for key, value in m.items():
                 if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
                     continue
 
-                # Získáme prefix z oficiálního názvu instance integrace v HA
-                station_prefix = self.entry.title.lower().replace(" ", "_")
-                entity_id = f"sensor.{station_prefix}_{key.lower()}"
+                # Zjistíme interní ID senzoru, pokud ho neznáme, použijeme malá písmena z API
+                internal_sid = api_to_internal_mapping.get(key, key.lower())
+                entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
                 try:
                     v = float(value)
@@ -168,7 +185,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if v is None:
                     continue
 
-                # Zkontrolujeme a zapíšeme bod, pokud v recorderu chybí
+                # Zkontrolujeme a zapíšeme bod pod správným systémovým entity_id
                 if not await self._history_exists(entity_id, ts):
                     await self._insert_history_point(entity_id, v, ts)
 
