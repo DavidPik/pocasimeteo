@@ -106,15 +106,19 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def native_wind_speed(self) -> float | None:
-        """Vrací rychlost větru."""
+        """Vrací rychlost větru přepočtenou na km/h pro weather platformu HA."""
         sensor = self.coordinator.sensors_payload.get("vitr_rychlost")
-        return sensor.get("value") if sensor else None
+        if sensor and sensor.get("value") is not None:
+            return round(float(sensor["value"]) * 3.6, 1)
+        return None
 
     @property
     def native_wind_gust(self) -> float | None:
-        """Vrací nárazy větru."""
+        """Vrací nárazy větru přepočtené na km/h pro weather platformu HA."""
         sensor = self.coordinator.sensors_payload.get("vitr_narazy")
-        return sensor.get("value") if sensor else None
+        if sensor and sensor.get("value") is not None:
+            return round(float(sensor["value"]) * 3.6, 1)
+        return None
 
     @property
     def wind_bearing(self) -> float | None:
@@ -136,7 +140,7 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def wind_speed_unit(self) -> str:
-        return "m/s"
+        return "km/h"
 
     @property
     def visibility_unit(self) -> str:
