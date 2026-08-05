@@ -17,7 +17,6 @@ from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -28,7 +27,6 @@ async def async_setup_entry(
     coordinator: PocasimeteoDataUpdateCoordinator = store["coordinator"]
 
     async_add_entities([PocasimeteoWeather(coordinator, entry)])
-
 
 class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], WeatherEntity):
     """Hlavní weather entita pro PočasíMeteo provázaná s koordinátorem."""
@@ -45,8 +43,9 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         self._attr_unique_id = entry.entry_id
         self._attr_name = self._entry.data.get(CONF_STATION) or "PočasíMeteo"
 
-        # Deklarujeme podporu pro asynchronní předpověď (forecast), pokud se v budoucnu napojí
-        self._attr_supported_features = WeatherEntityFeature.FORECAST_DAILY
+        # ARCHITEKTURA: Tato meteostanice poskytuje pouze aktuální lokální data.
+        # Předpověď počasí je vypnutá, abychom zamezili chybám NotImplementedError.
+        self._attr_supported_features = 0
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
