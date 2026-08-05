@@ -156,25 +156,26 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             # Převodní slovník z API klíčů na interní ID senzorů z const.py
             api_to_internal_mapping = {
-                "TeplotaVnejsi": "teplota_vnejsi",
-                "VlhkostVnejsi": "vlhkost_vnejsi",
-                "TlakRel": "tlak_relativni",
-                "SrazkyIntenzita": "intenzita_srazek",
-                "Vitr": "vitr_rychlost",
-                "VitrNarazy": "vitr_narazy",
-                "VitrSmer": "vitr_smer",
-                "SlunZareni": "slunecni_zareni",
-                "UVindex": "uv_index",
-                "TeplotaVnitrni": "teplota_vnitrni",
-                "VlhkostVnitrni": "vlhkost_vnitrni"
+                "teplotavnejsi": "teplota_vnejsi",
+                "vlhkostvnejsi": "vlhkost_vnejsi",
+                "tlakrel": "tlak_relativni",
+                "srazkyintenzita": "intenzita_srazek",
+                "vitr": "vitr_rychlost",
+                "vitrnarazy": "vitr_narazy",
+                "vitrsmer": "vitr_smer",
+                "slunzareni": "slunecni_zareni",
+                "uvindex": "uv_index",
+                "teplotavnitrni": "teplota_vnitrni",
+                "vlhkostvnitrni": "vlhkost_vnitrni"
             }
 
             for key, value in m.items():
                 if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
                     continue
 
-                # Zjistíme interní ID senzoru, pokud ho neznáme, použijeme malá písmena z API
-                internal_sid = api_to_internal_mapping.get(key, key.lower())
+                # Vyhledáváme v mapování s převedením klíče na malá písmena
+                key_lower = key.lower()
+                internal_sid = api_to_internal_mapping.get(key_lower, key_lower)
                 entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
                 try:
