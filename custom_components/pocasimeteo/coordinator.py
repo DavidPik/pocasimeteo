@@ -261,8 +261,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Import historie do DB (vyplnění mezer po výpadku)
         history_payload = None
-        if isinstance(raw.get("DoplCidlaJson"), dict):
-            history_payload = raw["DoplCidlaJson"].get("Historie")
+        dopl = raw.get("DoplCidlaJson")
+        if isinstance(dopl, str):
+            try:
+                dopl = json.loads(dopl)
+            except:
+                dopl = None
+
+        if history_payload is None:
+            history_payload = raw.get("Historie")
+            
         if history_payload is None and isinstance(raw.get("Historie"), list):
             history_payload = raw["Historie"]
 
