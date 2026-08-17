@@ -306,6 +306,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as e:
                 _LOGGER.debug("Fallback intensity calculation failed: %s", e)
 
+        # Uložíme fallback intenzitu do Recorderu
+        if self._latest_rain_intensity > 0:
+            entity_id = f"sensor.{self.entry.title.lower().replace(' ', '_')}_intenzita_srazek"
+            ts = datetime.now()
+            await self._insert_history_point(entity_id, self._latest_rain_intensity, ts)
+
         raw["SrazkyIntenzita"] = self._latest_rain_intensity
 
         # Normalizace a klouzavé 24h statistiky
