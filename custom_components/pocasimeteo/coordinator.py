@@ -265,6 +265,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Import historie do DB (vyplnění mezer po výpadku)
         history_payload = None
+
         dopl = raw.get("DoplCidlaJson")
         if isinstance(dopl, str):
             try:
@@ -272,9 +273,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             except:
                 dopl = None
 
-        if history_payload is None:
-            history_payload = raw.get("Historie")
-            
+        if isinstance(dopl, dict):
+            history_payload = dopl.get("Historie")
+
         if history_payload is None and isinstance(raw.get("Historie"), list):
             history_payload = raw["Historie"]
 
