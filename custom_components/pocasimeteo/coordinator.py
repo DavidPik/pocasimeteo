@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import math
+import json
 from collections import Counter
 from datetime import datetime, timedelta
 
@@ -262,10 +263,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # Uložíme denní srážky do metadata, aby je weather entita mohla předat frontendové kartě
         if "SrazkyDen" in raw:
             self.station_metadata["srazky_den"] = raw["SrazkyDen"]
-        
+
         # Import historie do DB (vyplnění mezer po výpadku)
         history_payload = None
 
+        history_payload = None
+
+        # 1) Pokus o načtení historie z DoplCidlaJson
         dopl = raw.get("DoplCidlaJson")
         if isinstance(dopl, str):
             try:
@@ -276,14 +280,30 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if isinstance(dopl, dict):
             history_payload = dopl.get("Historie")
 
-        if history_payload is None and isinstance(raw.get("Historie"), list):
-            history_payload = raw["Historie"]
+        # 2) Fallback – API posílá historii přímo
+        if history_payload is None:
+            history_payload = raw.get("Historie")
 
         if isinstance(history_payload, list) and len(history_payload) > 0:
             try:
                 await self._import_history(history_payload)
             except Exception as hist_err:
                 _LOGGER.warning("Import historie PočasíMeteo selhal: %s", hist_err)
+
+        # Fallback výpočet intenzity srážek, pokud API neposílá historii
+        if self._latest_rain_intensity == 0.0 and "SrazkyDen" in raw:
+            try:
+                # Získáme poslední hodnotu z rolling history
+                rain_series = self._rolling_history.get("srazky_den", [])
+                if len(rain_series) >= 1:
+                    prev_val = rain_series[-1][1]
+                    curr_val = float(raw["SrazkyDen"])
+                    delta = curr_val - prev_val
+                    if delta > 0:
+                        # 5 minut = 0.0833 h
+                        self._latest_rain_intensity = round(delta / 0.0833, 2)
+            except Exception as e:
+                _LOGGER.debug("Fallback intensity calculation failed: %s", e)
 
         raw["SrazkyIntenzita"] = self._latest_rain_intensity
 
