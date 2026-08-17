@@ -1,7 +1,7 @@
 {
   "domain": "pocasimeteo",
   "name": "PočasíMeteo",
-  "version": "6.5.42",
+  "version": "6.5.43",
   "documentation": "https://github.com/davidpik/pocasimeteo",
   "issue_tracker": "https://github.com/davidpik/pocasimeteo/issues",
   "requirements": [],
