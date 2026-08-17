@@ -241,6 +241,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if isinstance(raw, dict) and "Zprava" in raw:
             raise UpdateFailed(f"PočasíMeteo API Error: {raw['Zprava']}")
 
+        # Uložíme denní srážky do metadata, aby je weather entita mohla předat frontendové kartě
+        if "SrazkyDen" in raw:
+            self.station_metadata["srazky_den"] = raw["SrazkyDen"]
+
         # Zpracování metadat stanice a extrakce payloadu počasí
         if isinstance(raw, list) and len(raw) > 0:
             # První prvek pole obsahuje metadata stanice
