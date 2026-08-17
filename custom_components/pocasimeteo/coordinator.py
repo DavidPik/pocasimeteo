@@ -293,14 +293,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # Fallback výpočet intenzity srážek, pokud API neposílá historii
         if self._latest_rain_intensity == 0.0 and "SrazkyDen" in raw:
             try:
-                # Získáme poslední hodnotu z rolling history
-                rain_series = self._rolling_history.get("srazky_den", [])
-                if len(rain_series) >= 1:
-                    prev_val = rain_series[-1][1]
-                    curr_val = float(raw["SrazkyDen"])
+                # Rolling history pro denní srážky si musíme vytvořit sami
+                rain_series = self._rolling_history.setdefault("srazky_den_raw", [])
+                curr_val = float(raw["SrazkyDen"])
+                rain_series.append((datetime.now(), curr_val))
+
+                if len(rain_series) >= 2:
+                    prev_val = rain_series[-2][1]
                     delta = curr_val - prev_val
                     if delta > 0:
-                        # 5 minut = 0.0833 h
                         self._latest_rain_intensity = round(delta / 0.0833, 2)
             except Exception as e:
                 _LOGGER.debug("Fallback intensity calculation failed: %s", e)
