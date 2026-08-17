@@ -164,11 +164,19 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         
         attrs[ATTR_API_TIMESTAMP] = datetime.now().isoformat()
 
-        # 2. Celkové srážky za aktuální den získané bezpečně z koordinátoru
-        if hasattr(self.coordinator, "data") and isinstance(self.coordinator.data, dict):
-            attrs[ATTR_DAILY_RAIN] = self.coordinator.data.get("SrazkyDen", 0)
+        # Denní srážky – přímo z API payloadu uloženého v coordinatoru
+        daily_rain = None
+
+        # Coordinator ukládá syrový API payload do sensors_payload? Ne. Musíme použít station_metadata.
+        if "srazky_den" in self.coordinator.station_metadata:
+            daily_rain = self.coordinator.station_metadata["srazky_den"]
         else:
-            attrs[ATTR_DAILY_RAIN] = 0
+            # Fallback – pokud metadata nejsou, vezmeme hodnotu z posledního raw API payloadu
+            raw = getattr(self.coordinator, "data", {})
+            if isinstance(raw, dict):
+                daily_rain = raw.get("SrazkyDen")
+
+        attrs[ATTR_DAILY_RAIN] = daily_rain if daily_rain is not None else 0
 
         # Ponecháme základní update_interval pro stabilitu
         attrs["update_interval"] = 5
