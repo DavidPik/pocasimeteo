@@ -291,7 +291,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.warning("Import historie PočasíMeteo selhal: %s", hist_err)
 
         # Fallback výpočet intenzity srážek, pokud API neposílá historii
-        if self._latest_rain_intensity == 0.0 and "SrazkyDen" in raw:
+        if "SrazkyDen" in raw:
             try:
                 # Rolling history pro denní srážky si musíme vytvořit sami
                 rain_series = self._rolling_history.setdefault("srazky_den_raw", [])
@@ -302,6 +302,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     prev_val = rain_series[-2][1]
                     delta = curr_val - prev_val
                     if delta > 0:
+                        # 5 minut = 0.0833 h
                         self._latest_rain_intensity = round(delta / 0.0833, 2)
             except Exception as e:
                 _LOGGER.debug("Fallback intensity calculation failed: %s", e)
