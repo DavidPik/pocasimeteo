@@ -221,6 +221,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self._latest_rain_intensity: float = 0.0
         self.station_metadata = {}
         self.sensors_payload = {}
+        self._history_task = None
 
     # -------------------------------------------------------------------------
     # Main API update
@@ -269,10 +270,19 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if "SrazkyDen" in raw:
             self.station_metadata["srazky_den"] = raw["SrazkyDen"]
 
-        # Import historie z nového API formátu (běží na pozadí, neblokuje bootstrap)
+        # Import historie z nového API formátu – běží na pozadí, jen pokud už neběží
         if isinstance(history_payload, list) and len(history_payload) > 0:
             try:
-                self.hass.async_create_task(self._import_history(history_payload))
+                if self._history_task is None or self._history_task.done():
+                    _LOGGER.debug(
+                        "Spouštím import historie PočasíMeteo (%d bodů)",
+                        len(history_payload),
+                    )
+                    self._history_task = self.hass.async_create_task(
+                        self._import_history(history_payload)
+                    )
+                else:
+                    _LOGGER.debug("Import historie PočasíMeteo už běží, nový start přeskočen")
             except Exception as hist_err:
                 _LOGGER.warning("Import historie PočasíMeteo selhal: %s", hist_err)
 
