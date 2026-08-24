@@ -150,6 +150,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # *** OPRAVA: frontu PŘEPISUJEME, ne extend() ***
         self._history_queue = list(sorted_measurements)
 
+        # DIAGNOSTIKA: aktuální délka fronty
+        self._diag_queue_length = len(self._history_queue)
+
         # Worker se spouští jen když HA už běží
         if self._ha_started:
             if self._history_task is None or self._history_task.done():
@@ -163,17 +166,28 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         station_prefix = self.entry.title.lower().replace(" ", "_")
 
-        batch_size = 12  # *** OPRAVA: menší dávky ***
-        pause = 0.5      # *** OPRAVA: delší pauza mezi dávkami ***
+        batch_size = 12  # menší dávky
+        pause = 0.5      # delší pauza mezi dávkami
+
+        # DIAGNOSTIKA: worker běží
+        self._diag_worker_running = True
 
         while self._history_queue:
             batch: list[dict] = []
             while self._history_queue and len(batch) < batch_size:
                 batch.append(self._history_queue.pop(0))
 
+            # DIAGNOSTIKA: velikost poslední dávky + aktuální délka fronty
+            self._diag_last_batch_size = len(batch)
+            self._diag_queue_length = len(self._history_queue)
+
             await self._import_history_batch(station_prefix, batch)
 
             await asyncio.sleep(pause)
+
+        # DIAGNOSTIKA: worker skončil, fronta prázdná
+        self._diag_worker_running = False
+        self._diag_queue_length = len(self._history_queue)
 
         _LOGGER.debug("Background worker pro import historie dokončil práci")
 
@@ -194,6 +208,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "vlhkostvnitrni": "vlhkost_vnitrni",
         }
 
+        missing = 0
+
         for m in measurements:
             ts_raw = m.get("Datum")
             if not ts_raw:
@@ -201,11 +217,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             ts = datetime.fromisoformat(ts_raw).replace(tzinfo=None)
 
+            # DIAGNOSTIKA: timestamp posledního zápisu (poslední zpracovaný bod v dávce)
+            self._diag_last_write_ts = ts
+
             for key, value in m.items():
                 if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
                     continue
 
-                # *** OPRAVA: validace hodnot ***
+                # validace hodnot
                 if value in (None, "", " ", "N/A", "--"):
                     continue
 
@@ -222,7 +241,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
                 if not await self._history_exists(entity_id, ts):
+                    missing += 1
                     await self._insert_history_point(entity_id, v, ts)
+
+        # DIAGNOSTIKA: kolik bodů v této dávce bylo skutečně doplněno
+        self._diag_missing_count = missing
 
     # -------------------------------------------------------------------------
     # Coordinator initialization
@@ -255,6 +278,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self._history_task: asyncio.Task | None = None
 
         self._ha_started: bool = False
+
+        # DIAGNOSTIKA – inicializace
+        self._diag_queue_length: int = 0
+        self._diag_worker_running: bool = False
+        self._diag_missing_count: int = 0
+        self._diag_last_batch_size: int = 0
+        self._diag_last_write_ts: datetime | None = None
 
     # -------------------------------------------------------------------------
     # Main API update
@@ -391,6 +421,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     "timestamp": timestamp_str,
                 },
             }
+
+        # DIAGNOSTIKA – přidáme do weather entity
+        if "weather" in result:
+            result["weather"]["attributes"]["history_queue_length"] = self._diag_queue_length
+            result["weather"]["attributes"]["history_worker_running"] = self._diag_worker_running
+            result["weather"]["attributes"]["history_missing_count"] = self._diag_missing_count
+            result["weather"]["attributes"]["history_last_batch_size"] = self._diag_last_batch_size
+            result["weather"]["attributes"]["history_last_write_ts"] = (
+                self._diag_last_write_ts.isoformat() if self._diag_last_write_ts else None
+            )
 
         for api_key, value in raw.items():
             if api_key in (
