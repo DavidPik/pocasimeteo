@@ -19,6 +19,9 @@ from .const import (
     CONF_UPDATE_INTERVAL,
     CONF_FORECAST_ENTITY_ID,
     CONF_SENSORS,
+    CONF_STATISTICS_INTERVAL,
+    ALLOWED_STATISTICS_INTERVALS,
+    DEFAULT_STATISTICS_INTERVAL,
     DEFAULT_OPTIONS,
     DEFAULT_SENSOR_OPTIONS,
     SENSOR_DEFINITIONS,
@@ -39,13 +42,11 @@ def build_sensor_form(options_sensors: dict, coordinator_sensors: dict = None) -
     """
     schema = {}
     
-    # Spojíme známé statické senzory s těmi, které jsou reálně uloženy nebo nalezeny v koordinátoru
     all_sensor_ids = set(DEFAULT_SENSOR_OPTIONS.keys()) | set(options_sensors.keys())
     if coordinator_sensors:
         all_sensor_ids |= set(coordinator_sensors.keys())
 
     for sensor_id in sorted(all_sensor_ids):
-        # 1. KROK: Zjistíme výchozí hodnoty (tovární nastavení) podle toho, o jaký typ čidla jde
         if sensor_id in SENSOR_DEFINITIONS:
             meta = SENSOR_DEFINITIONS[sensor_id]
             fallback_order = meta.get("order", 999)
@@ -58,7 +59,6 @@ def build_sensor_form(options_sensors: dict, coordinator_sensors: dict = None) -
 
         current = options_sensors.get(sensor_id, {})
 
-        # 2. KROK: Do formuláře přidáme standardní políčka (řazení, barva, styl grafu, viditelnost)
         schema.update({
             vol.Required(f"{sensor_id}_order", default=current.get("order", fallback_order)): int,
             vol.Required(f"{sensor_id}_color", default=current.get("color", fallback_color)): str,
@@ -66,7 +66,6 @@ def build_sensor_form(options_sensors: dict, coordinator_sensors: dict = None) -
             vol.Required(f"{sensor_id}_visible", default=current.get("visible", True)): bool,
         })
         
-        # 3. KROK: Pouze pokud jde o dynamické čidlo (není v const.py), dovolíme uživateli ho smazat
         if sensor_id not in SENSOR_DEFINITIONS:
             schema.update({
                 vol.Optional(f"{sensor_id}_delete_config", default=False): bool
@@ -74,11 +73,11 @@ def build_sensor_form(options_sensors: dict, coordinator_sensors: dict = None) -
 
     return schema
 
+
 def convert_user_input_to_options(user_input: dict) -> dict:
     """Převádí vstupy z formuláře a filtruje smazané dynamické senzory."""
     sensors = {}
     
-    # Extrahujeme unikátní sensor_id ze zadaných polí formuláře
     all_sensor_ids = set()
     for key in user_input.keys():
         if key.endswith("_visible"):
@@ -86,11 +85,9 @@ def convert_user_input_to_options(user_input: dict) -> dict:
             all_sensor_ids.add(sensor_id)
 
     for sensor_id in all_sensor_ids:
-        # Pokud uživatel zaškrtl smazání konfigurace dynamického čidla, zahodíme ho
         if user_input.get(f"{sensor_id}_delete_config", False):
             continue
             
-        # Zjistíme typ: výchozí senzory ho mají z const.py, dynamické jsou vždy secondary
         if sensor_id in SENSOR_DEFINITIONS:
             sensor_type = SENSOR_DEFINITIONS[sensor_id].get("type", "primary")
         else:
@@ -108,6 +105,7 @@ def convert_user_input_to_options(user_input: dict) -> dict:
         CONF_UPDATE_INTERVAL: user_input[CONF_UPDATE_INTERVAL],
         CONF_FORECAST_ENTITY_ID: user_input.get(CONF_FORECAST_ENTITY_ID, ""),
         CONF_SENSORS: sensors,
+        CONF_STATISTICS_INTERVAL: user_input.get(CONF_STATISTICS_INTERVAL, DEFAULT_STATISTICS_INTERVAL),
     }
 
 # ------------------------------------------------------------
@@ -128,30 +126,22 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
         """Sestaví opravené schéma formuláře s vyloučením vlastní weather entity."""
         registry = er.async_get(self.hass)
         
-        # ARCHITEKTURA: Zjistíme přesný prefix naší stanice (např. "gar632")
         station_prefix = (self.config_entry.title or "").lower().replace(" ", "_")
         own_weather_entity = f"weather.{station_prefix}"
 
-        # Vyfiltrujeme všechny weather entity v systému kromě té naší vlastní
         weather_entities = sorted(
             entity.entity_id
             for entity in registry.entities.values()
             if entity.entity_id.startswith("weather.") and entity.entity_id != own_weather_entity
         )
 
-        # Sloučíme výchozí nastavení s reálně uloženými options integrace
         options = {**DEFAULT_OPTIONS, **self.config_entry.options}
-        
-        # OPRAVA 500: Správně vytáhneme vnitřní slovník senzorů z klíče CONF_SENSORS,
-        # nikoli celý kořenový objekt options, čímž scelíme datovou strukturu pro build_sensor_form
         sensors_config = options.get(CONF_SENSORS, DEFAULT_SENSOR_OPTIONS)
 
-        # Bezpečné načtení dat z běžícího koordinátoru na pozadí
         store = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id, {})
         coordinator = store.get("coordinator") if isinstance(store, dict) else None
         coordinator_sensors = coordinator.sensors_payload if coordinator else None
 
-        # Ověříme, zda aktuálně vybraná forecast entita stále existuje v seznamu, aby volba vol.In neselhala
         current_forecast = options.get(CONF_FORECAST_ENTITY_ID, "")
         if current_forecast and current_forecast not in weather_entities:
             weather_entities.append(current_forecast)
@@ -159,9 +149,14 @@ class PocasimeteoOptionsFlow(config_entries.OptionsFlow):
         schema = {
             vol.Required(CONF_UPDATE_INTERVAL, default=options.get(CONF_UPDATE_INTERVAL, 5)): vol.All(int, vol.Range(min=1, max=60)),
             vol.Optional(CONF_FORECAST_ENTITY_ID, default=current_forecast): vol.In([""] + weather_entities),
+
+            # ⭐ Nová volba – interval statistik
+            vol.Required(
+                CONF_STATISTICS_INTERVAL,
+                default=options.get(CONF_STATISTICS_INTERVAL, DEFAULT_STATISTICS_INTERVAL),
+            ): vol.In(ALLOWED_STATISTICS_INTERVALS),
         }
 
-        # Do schématu bezpečně předáme vyseparovaný slovník senzorů
         schema.update(build_sensor_form(sensors_config, coordinator_sensors))
         return vol.Schema(schema)
 
@@ -178,7 +173,6 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(
         config_entry: config_entries.ConfigEntry,
     ) -> PocasimeteoOptionsFlow:
-        """ARCHITEKTURA HA: Oficiální registrace toku možností nastavení (Options Flow)."""
         return PocasimeteoOptionsFlow()
     
     async def async_step_user(self, user_input=None) -> FlowResult:
@@ -227,24 +221,26 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Sestaví čisté výchozí schéma s vyloučením budoucí vlastní weather entity."""
         registry = er.async_get(self.hass)
         
-        # ARCHITEKTURA: Odvodíme budoucí název naší entity z textu zadaného v prvním kroku
         station_prefix = (getattr(self, "_station_name", "") or "").lower().replace(" ", "_")
         own_weather_entity = f"weather.{station_prefix}"
 
-        # Vyfiltrujeme všechny weather entity v systému kromě té naší budoucí vlastní
         weather_entities = sorted(
             entity.entity_id
             for entity in registry.entities.values()
             if entity.entity_id.startswith("weather.") and entity.entity_id != own_weather_entity
         )
 
-        # ARCHITEKTURA HA: Při prvním přidání integrace stavíme formulář z továrních konstant
         schema = {
             vol.Required(CONF_UPDATE_INTERVAL, default=DEFAULT_OPTIONS[CONF_UPDATE_INTERVAL]): vol.All(int, vol.Range(min=1, max=60)),
             vol.Optional(CONF_FORECAST_ENTITY_ID, default=""): vol.In([""] + weather_entities),
+
+            # ⭐ Nová volba – interval statistik
+            vol.Required(
+                CONF_STATISTICS_INTERVAL,
+                default=DEFAULT_STATISTICS_INTERVAL,
+            ): vol.In(ALLOWED_STATISTICS_INTERVALS),
         }
 
-        # Sestavíme formulář z výchozích možností senzorů
         schema.update(build_sensor_form(DEFAULT_SENSOR_OPTIONS))
         return vol.Schema(schema)
 
