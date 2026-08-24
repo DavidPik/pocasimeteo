@@ -45,6 +45,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _history_exists(self, entity_id: str, ts: datetime) -> bool:
         rec = get_instance(self.hass)
+
         def _check():
             with rec.get_session() as session:
                 q = select(States).where(
@@ -52,12 +53,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     States.last_changed == ts
                 )
                 return session.execute(q).first() is not None
-        return await self.hass.async_add_executor_job(_check)
+
+        # Použijeme recorder executor, jak HA doporučuje
+        return await rec.async_add_executor_job(_check)
 
     async def _insert_history_point(self, entity_id: str, value, ts: datetime):
         """Bezpečně vloží historický stav se správným provázáním cizích klíčů DB."""
         rec = get_instance(self.hass)
-        def _insert():
+            def _insert():
             with rec.get_session() as session:
                 # 1. Zjistíme nebo vytvoříme metadata_id pro danou entitu (vyžadováno od HA 2023.x+)
                 meta_row = session.execute(
@@ -95,8 +98,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 session.add(row)
                 session.commit()
 
-        await self.hass.async_add_executor_job(_insert)
-    
+        await rec.async_add_executor_job(_insert)
+
     # -------------------------------------------------------------------------
     # Import full 5-minute history from API
     # -------------------------------------------------------------------------
@@ -242,6 +245,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"PočasíMeteo API Error: {raw['Zprava']}")
 
         # Zpracování metadat stanice a extrakce payloadu počasí
+        history_payload: list[dict] = []
+
         if isinstance(raw, list) and len(raw) > 0:
             # První prvek pole obsahuje metadata stanice
             meta_payload = raw[0]
@@ -252,12 +257,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
             # Nový formát API: raw = [ metadata, měření1, měření2, ... ]
-            if isinstance(raw, list) and len(raw) > 1:
-                # 1) metadata zůstává v raw[0]
-                meta_payload = raw[0]
-                # 2) celá historie měření (24h)
+            if len(raw) > 1:
+                # celá historie měření (24h) – od aktuálního záznamu do minulosti
                 history_payload = raw[1:]
-                # 3) aktuální záznam = první prvek historie - ???
+                # aktuální záznam = první prvek historie (nejnovější měření)
                 raw = history_payload[0]
             else:
                 raise UpdateFailed("API response structure valid, but weather payload missing")
@@ -267,7 +270,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             self.station_metadata["srazky_den"] = raw["SrazkyDen"]
 
         # Import historie z nového API formátu
-        if isinstance(history_payload, list) and len(history_payload) > 0:
+        if history_payload:
             try:
                 await self._import_history(history_payload)
             except Exception as hist_err:
