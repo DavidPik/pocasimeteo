@@ -7,7 +7,7 @@ import asyncio
 import math
 import json
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -52,10 +52,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     States.entity_id == entity_id,
                     States.last_changed == ts
                 )
-                res = session.execute(q).first()
-                _LOGGER.error("PM-HIST: EXISTS CHECK -> %s @ %s -> %s", entity_id, ts, bool(res))
-                return res is not None
-
+                return session.execute(q).first() is not None
 
         # ODCHYLKA/BEZPEČNOST: Databázové dotazy nesmí běžet přímo v event loopu, 
         # jinak by způsobily mikro-zárazy celého HA Green. Delegujeme je do vlákna na pozadí.
@@ -100,12 +97,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     last_updated=ts
                 )
                 session.add(row)
-                try:
-                    session.commit()
-                    _LOGGER.error("PM-HIST: COMMIT OK -> %s @ %s", entity_id, ts)
-                except Exception as e:
-                    _LOGGER.error("PM-HIST: COMMIT FAILED for %s @ %s: %s", entity_id, ts, e)
-                    raise
+                session.commit()
 
         await self.hass.async_add_executor_job(_insert)
     
@@ -115,7 +107,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _import_history(self, measurements: list[dict]):
         """Zpracuje historii z JSONu API a doplní chybějící body do databáze."""
-        _LOGGER.error("PM-HIST: Importing %s history points from API", len(measurements))
         sorted_measurements = sorted(
             measurements,
             key=lambda m: datetime.fromisoformat(m["Datum"].replace("Z", "+00:00"))
@@ -130,9 +121,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if not ts_raw:
                 continue
 
-            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
-            # převod na čisté UTC bez tzinfo (naivní datetime)
-            ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+            ts = datetime.fromisoformat(ts_raw)
+            # převod na naivní UTC (API posílá lokální čas)
+            ts = ts.replace(tzinfo=None)
             try:
                 rain_total = float(m.get("SrazkyDen", 0))
             except Exception:
@@ -163,8 +154,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             ts_raw = m.get("Datum")
             if not ts_raw:
                 continue
-            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
 
+            ts = datetime.fromisoformat(ts_raw)
+            # převod na naivní UTC (API posílá lokální čas)
+            ts = ts.replace(tzinfo=None)
             # Převodní slovník z API klíčů na interní ID senzorů z const.py
             api_to_internal_mapping = {
                 "teplotavnejsi": "teplota_vnejsi",
@@ -198,14 +191,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     continue
 
                 # Zkontrolujeme a zapíšeme bod pod správným systémovým entity_id
-                exists = await self._history_exists(entity_id, ts)
-                _LOGGER.error("PM-HIST: entity=%s ts=%s value=%s exists=%s", entity_id, ts, v, exists)
-
-                if not exists:
-                    _LOGGER.error("PM-HIST: INSERT -> %s @ %s", entity_id, ts)
+                if not await self._history_exists(entity_id, ts):
                     await self._insert_history_point(entity_id, v, ts)
-                else:
-                    _LOGGER.error("PM-HIST: SKIP (already exists) -> %s @ %s", entity_id, ts)
 
     # -------------------------------------------------------------------------
     # Coordinator initialization
@@ -268,11 +255,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
-            # Extrakce samotného počasí z pole
-            if len(raw) > 1 and isinstance(raw[1], dict) and "Datum" in raw[1]:
-                raw = raw[1]
-            elif isinstance(raw[0], dict) and "Datum" in raw[0]:
-                raw = raw[0]
+            # Nový formát API: raw = [ metadata, měření1, měření2, ... ]
+            if isinstance(raw, list) and len(raw) > 1:
+                # 1) metadata zůstává v raw[0]
+                meta_payload = raw[0]
+                # 2) celá historie měření (24h)
+                history_payload = raw[1:]
+                # 3) aktuální záznam = první prvek historie - ???
+                raw = history_payload[0]
             else:
                 raise UpdateFailed("API response structure valid, but weather payload missing")
 
@@ -280,31 +270,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if "SrazkyDen" in raw:
             self.station_metadata["srazky_den"] = raw["SrazkyDen"]
 
-        # Import historie do DB (vyplnění mezer po výpadku)
-        history_payload = None
-
-        history_payload = None
-
-        # 1) Pokus o načtení historie z DoplCidlaJson
-        dopl = raw.get("DoplCidlaJson")
-        if isinstance(dopl, str):
-            try:
-                dopl = json.loads(dopl)
-            except:
-                dopl = None
-
-        if isinstance(dopl, dict):
-            history_payload = dopl.get("Historie")
-
-        # 2) Fallback – API posílá historii přímo
-        if history_payload is None:
-            history_payload = raw.get("Historie")
-
+        # Import historie z nového API formátu
         if isinstance(history_payload, list) and len(history_payload) > 0:
             try:
                 await self._import_history(history_payload)
             except Exception as hist_err:
-                _LOGGER.error("Import historie PočasíMeteo selhal: %s", hist_err)
+                _LOGGER.warning("Import historie PočasíMeteo selhal: %s", hist_err)
 
         # Fallback výpočet intenzity srážek, pokud API neposílá historii
         if "SrazkyDen" in raw:
@@ -321,12 +292,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                         # 5 minut = 0.0833 h
                         self._latest_rain_intensity = round(delta / 0.0833, 2)
             except Exception as e:
-                _LOGGER.error("Fallback intensity calculation failed: %s", e)
+                _LOGGER.debug("Fallback intensity calculation failed: %s", e)
 
         # Uložíme fallback intenzitu do Recorderu
         if self._latest_rain_intensity > 0:
             entity_id = f"sensor.{self.entry.title.lower().replace(' ', '_')}_intenzita_srazek"
-            ts = datetime.now(timezone.utc).replace(tzinfo=None)
+            ts = datetime.now()
             await self._insert_history_point(entity_id, self._latest_rain_intensity, ts)
 
         raw["SrazkyIntenzita"] = self._latest_rain_intensity
