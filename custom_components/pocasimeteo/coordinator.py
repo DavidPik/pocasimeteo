@@ -269,15 +269,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if "SrazkyDen" in raw:
             self.station_metadata["srazky_den"] = raw["SrazkyDen"]
 
-        # Import historie z nového API formátu
-        if history_payload:
+        # Import historie z nového API formátu (běží na pozadí, neblokuje bootstrap)
+        if isinstance(history_payload, list) and len(history_payload) > 0:
             try:
-                await self._import_history(history_payload)
+                self.hass.async_create_task(self._import_history(history_payload))
             except Exception as hist_err:
                 _LOGGER.warning("Import historie PočasíMeteo selhal: %s", hist_err)
 
         # Fallback výpočet intenzity srážek, pokud API neposílá historii
         if "SrazkyDen" in raw:
+
             try:
                 # Rolling history pro denní srážky si musíme vytvořit sami
                 rain_series = self._rolling_history.setdefault("srazky_den_raw", [])
