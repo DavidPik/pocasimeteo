@@ -44,24 +44,20 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _history_exists(self, entity_id: str, ts: datetime) -> bool:
-        """Ověří v DB existenci bodu. Spouští se bezpečně v executor jobu."""
+        rec = get_instance(self.hass)
         def _check():
-            rec = get_instance(self.hass)
             with rec.get_session() as session:
                 q = select(States).where(
                     States.entity_id == entity_id,
                     States.last_changed == ts
                 )
                 return session.execute(q).first() is not None
-
-        # ODCHYLKA/BEZPEČNOST: Databázové dotazy nesmí běžet přímo v event loopu, 
-        # jinak by způsobily mikro-zárazy celého HA Green. Delegujeme je do vlákna na pozadí.
         return await self.hass.async_add_executor_job(_check)
 
     async def _insert_history_point(self, entity_id: str, value, ts: datetime):
         """Bezpečně vloží historický stav se správným provázáním cizích klíčů DB."""
+        rec = get_instance(self.hass)
         def _insert():
-            rec = get_instance(self.hass)
             with rec.get_session() as session:
                 # 1. Zjistíme nebo vytvoříme metadata_id pro danou entitu (vyžadováno od HA 2023.x+)
                 meta_row = session.execute(
