@@ -52,7 +52,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     States.entity_id == entity_id,
                     States.last_changed == ts
                 )
-                return session.execute(q).first() is not None
+                res = session.execute(q).first()
+                _LOGGER.debug("PM-HIST: EXISTS CHECK -> %s @ %s -> %s", entity_id, ts, bool(res))
+                return res is not None
+
 
         # ODCHYLKA/BEZPEČNOST: Databázové dotazy nesmí běžet přímo v event loopu, 
         # jinak by způsobily mikro-zárazy celého HA Green. Delegujeme je do vlákna na pozadí.
@@ -97,7 +100,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     last_updated=ts
                 )
                 session.add(row)
-                session.commit()
+                try:
+                    session.commit()
+                    _LOGGER.warning("PM-HIST: COMMIT OK -> %s @ %s", entity_id, ts)
+                except Exception as e:
+                    _LOGGER.error("PM-HIST: COMMIT FAILED for %s @ %s: %s", entity_id, ts, e)
+                    raise
 
         await self.hass.async_add_executor_job(_insert)
     
@@ -107,6 +115,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _import_history(self, measurements: list[dict]):
         """Zpracuje historii z JSONu API a doplní chybějící body do databáze."""
+        _LOGGER.warning("PM-HIST: Importing %s history points from API", len(measurements))
         sorted_measurements = sorted(
             measurements,
             key=lambda m: datetime.fromisoformat(m["Datum"].replace("Z", "+00:00"))
@@ -189,8 +198,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     continue
 
                 # Zkontrolujeme a zapíšeme bod pod správným systémovým entity_id
-                if not await self._history_exists(entity_id, ts):
+                exists = await self._history_exists(entity_id, ts)
+                _LOGGER.warning("PM-HIST: entity=%s ts=%s value=%s exists=%s", entity_id, ts, v, exists)
+
+                if not exists:
+                    _LOGGER.warning("PM-HIST: INSERT -> %s @ %s", entity_id, ts)
                     await self._insert_history_point(entity_id, v, ts)
+                else:
+                    _LOGGER.debug("PM-HIST: SKIP (already exists) -> %s @ %s", entity_id, ts)
 
     # -------------------------------------------------------------------------
     # Coordinator initialization
