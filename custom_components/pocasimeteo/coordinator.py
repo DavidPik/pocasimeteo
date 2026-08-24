@@ -53,7 +53,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     States.last_changed == ts
                 )
                 res = session.execute(q).first()
-                _LOGGER.debug("PM-HIST: EXISTS CHECK -> %s @ %s -> %s", entity_id, ts, bool(res))
+                _LOGGER.error("PM-HIST: EXISTS CHECK -> %s @ %s -> %s", entity_id, ts, bool(res))
                 return res is not None
 
 
@@ -102,7 +102,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 session.add(row)
                 try:
                     session.commit()
-                    _LOGGER.warning("PM-HIST: COMMIT OK -> %s @ %s", entity_id, ts)
+                    _LOGGER.error("PM-HIST: COMMIT OK -> %s @ %s", entity_id, ts)
                 except Exception as e:
                     _LOGGER.error("PM-HIST: COMMIT FAILED for %s @ %s: %s", entity_id, ts, e)
                     raise
@@ -115,7 +115,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _import_history(self, measurements: list[dict]):
         """Zpracuje historii z JSONu API a doplní chybějící body do databáze."""
-        _LOGGER.warning("PM-HIST: Importing %s history points from API", len(measurements))
+        _LOGGER.error("PM-HIST: Importing %s history points from API", len(measurements))
         sorted_measurements = sorted(
             measurements,
             key=lambda m: datetime.fromisoformat(m["Datum"].replace("Z", "+00:00"))
@@ -199,13 +199,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
                 # Zkontrolujeme a zapíšeme bod pod správným systémovým entity_id
                 exists = await self._history_exists(entity_id, ts)
-                _LOGGER.warning("PM-HIST: entity=%s ts=%s value=%s exists=%s", entity_id, ts, v, exists)
+                _LOGGER.error("PM-HIST: entity=%s ts=%s value=%s exists=%s", entity_id, ts, v, exists)
 
                 if not exists:
-                    _LOGGER.warning("PM-HIST: INSERT -> %s @ %s", entity_id, ts)
+                    _LOGGER.error("PM-HIST: INSERT -> %s @ %s", entity_id, ts)
                     await self._insert_history_point(entity_id, v, ts)
                 else:
-                    _LOGGER.debug("PM-HIST: SKIP (already exists) -> %s @ %s", entity_id, ts)
+                    _LOGGER.error("PM-HIST: SKIP (already exists) -> %s @ %s", entity_id, ts)
 
     # -------------------------------------------------------------------------
     # Coordinator initialization
@@ -304,7 +304,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             try:
                 await self._import_history(history_payload)
             except Exception as hist_err:
-                _LOGGER.warning("Import historie PočasíMeteo selhal: %s", hist_err)
+                _LOGGER.error("Import historie PočasíMeteo selhal: %s", hist_err)
 
         # Fallback výpočet intenzity srážek, pokud API neposílá historii
         if "SrazkyDen" in raw:
@@ -321,7 +321,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                         # 5 minut = 0.0833 h
                         self._latest_rain_intensity = round(delta / 0.0833, 2)
             except Exception as e:
-                _LOGGER.debug("Fallback intensity calculation failed: %s", e)
+                _LOGGER.error("Fallback intensity calculation failed: %s", e)
 
         # Uložíme fallback intenzitu do Recorderu
         if self._latest_rain_intensity > 0:
