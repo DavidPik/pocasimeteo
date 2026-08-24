@@ -26,16 +26,14 @@ async def async_setup_entry(
     store = hass.data[DOMAIN][entry.entry_id]
     coordinator: PocasimeteoDataUpdateCoordinator = store["coordinator"]
 
-    # Sledujeme již vytvořená vnitřní ID, abychom zamezili duplicitám
     known_entities: set[str] = set()
 
     @callback
     def async_add_new_sensors():
-        """Vnitřní funkce pro dynamické přidání nově objevených čidel z API."""
+        """Dynamicky přidá nově objevená čidla z API."""
         new_entities: list[PočasíMeteoSensor] = []
         
         for sensor_id, payload in coordinator.sensors_payload.items():
-            # Filtrujeme případný nechtěný klíč, který odpovídá celému názvu stanice
             if sensor_id == entry.data.get("station_name", "").lower():
                 continue
                 
@@ -50,10 +48,8 @@ async def async_setup_entry(
         if new_entities:
             async_add_entities(new_entities)
 
-    # Prvotní registrace entit při startu integrace
     async_add_new_sensors()
 
-    # Registrace posluchače na koordinátor pro objevování dynamických čidel za běhu
     entry.async_on_unload(
         coordinator.async_add_listener(async_add_new_sensors)
     )
@@ -69,14 +65,10 @@ class PočasíMeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], S
         sensor_id: str,
         meta: dict,
     ) -> None:
-        """Inicializace senzoru a nastavení základních vlastností."""
         super().__init__(coordinator)
         self._sensor_id = sensor_id
         self._entry = entry
 
-        # Prefix odvodíme z ID config entry integrace v malých písmenech
-        # Pokud entry_id obsahuje pomlčky/unikátní kód, HA interně pro entity_id používá title nebo název domény.
-        # Nejrobustnější je vzít unikátní ID z registru entit, nebo použít název z title záznamu:
         station_prefix = entry.title.lower().replace(" ", "_")
         self.entity_id = f"sensor.{station_prefix}_{sensor_id}"
         
@@ -87,7 +79,6 @@ class PočasíMeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], S
         self._attr_device_class = meta.get("device_class")
         self._attr_state_class = meta.get("state_class")
 
-        # Seskupení všech senzorů pod jedno fyzické zařízení meteostanice
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=coordinator.station_metadata.get("station_name") or "PočasíMeteo",
@@ -97,7 +88,7 @@ class PočasíMeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], S
 
     @property
     def native_value(self):
-        """Vrací aktuální naměřenou hodnotu čisla přímo z paměti koordinátoru."""
+        """Vrací aktuální naměřenou hodnotu přímo z paměti koordinátoru."""
         payload = self.coordinator.sensors_payload.get(self._sensor_id)
         if not payload:
             return None
@@ -105,7 +96,15 @@ class PočasíMeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], S
         
     @property
     def extra_state_attributes(self):
-        """Vrací doplňkové atributy pro frontendovou kartu PočasíMeteo."""
+        """
+        Vrací doplňkové atributy pro frontendovou kartu PočasíMeteo.
+
+        Obsahuje:
+        - grafické metadata (barva, styl, pořadí, viditelnost)
+        - diagnostické atributy
+        - statistické atributy spočítané v backendu z Recorderu (stats_min/stats_max
+          pro všechny senzory kromě směru větru, stats_avg/stats_mode/stats_var pro směr větru).
+        """
         payload = self.coordinator.sensors_payload.get(self._sensor_id)
         if not payload:
             return {}
@@ -113,8 +112,6 @@ class PočasíMeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], S
         meta = payload["meta"]
         attrs = payload.get("attributes", {})
 
-        # ARCHITEKTURA FRONTENDU: Předáváme barvy, řazení a styl grafu,
-        # spolu s klouzavými 24h statistikami z koordinátoru.
         return {
             "graph_color": meta.get("color"),
             "graph_style": meta.get("style"),
