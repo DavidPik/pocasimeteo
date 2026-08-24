@@ -18,6 +18,15 @@ CONF_UPDATE_INTERVAL = "update_interval"
 CONF_FORECAST_ENTITY_ID = "forecast_entity_id"
 CONF_SENSORS = "sensors"
 
+# Nová konfigurační volba – interval statistik (v hodinách)
+CONF_STATISTICS_INTERVAL = "statistics_interval"
+
+# Povolené intervaly statistik (v hodinách)
+ALLOWED_STATISTICS_INTERVALS = [6, 12, 24, 48, 72, 168]  # 168 = 7 dní
+
+# Defaultní interval statistik
+DEFAULT_STATISTICS_INTERVAL = 24
+
 # Atributy pro sjednocení s frontendem
 ATTR_STATION_LOCATION = "lokalita_stanice"
 ATTR_API_TIMESTAMP = "timestamp"
@@ -122,7 +131,7 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "name": "Vítr směr",
         "unit": "°",
         "icon": "mdi:compass",
-        "device_class": None,  # Směr větru nemá nativní číselnou device class, řeší se stupni
+        "device_class": None,
         "state_class": SensorStateClass.MEASUREMENT,
         "type": "primary",
         "order": 7,
@@ -193,6 +202,7 @@ DEFAULT_OPTIONS = {
     CONF_UPDATE_INTERVAL: DEFAULT_UPDATE_INTERVAL_MINUTES,
     CONF_FORECAST_ENTITY_ID: "",
     CONF_SENSORS: DEFAULT_SENSOR_OPTIONS,
+    CONF_STATISTICS_INTERVAL: DEFAULT_STATISTICS_INTERVAL,
 }
 
 # ------------------------------------------------------------
