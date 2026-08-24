@@ -24,8 +24,10 @@ from .const import (
     CONF_UPDATE_INTERVAL,
     CONF_SENSORS,
     CONF_STATION,
+    CONF_STATISTICS_INTERVAL,
     SENSOR_DEFINITIONS,
     DEFAULT_SENSOR_OPTIONS,
+    DEFAULT_STATISTICS_INTERVAL,
     get_dynamic_sensor_meta,
 )
 
@@ -35,7 +37,7 @@ _LOGGER = logging.getLogger(__name__)
 class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     """
     Koordinátor odpovědný za stahování dat, plnění mezer v historii databáze
-    a výpočet klouzavých 24h statistik pro potřeby frontendové karty.
+    a výpočet statistik pro potřeby frontendové karty.
     """
 
     # -------------------------------------------------------------------------
@@ -147,7 +149,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 "SrazkyIntenzita", 0.0
             )
 
-        # *** OPRAVA: frontu PŘEPISUJEME, ne extend() ***
+        # frontu přepisujeme
         self._history_queue = list(sorted_measurements)
 
         # DIAGNOSTIKA: aktuální délka fronty
@@ -261,6 +263,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         )
 
         self._sensor_options = entry.options.get(CONF_SENSORS, DEFAULT_SENSOR_OPTIONS)
+        self._statistics_interval = entry.options.get(
+            CONF_STATISTICS_INTERVAL,
+            DEFAULT_STATISTICS_INTERVAL,
+        )
 
         super().__init__(
             hass,
@@ -375,10 +381,93 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         normalized = self._normalize_data(raw)
         self._update_rolling_stats(normalized)
 
+        # Statistické atributy z Recorderu
+        await self._update_recorder_statistics(normalized)
+
         self.sensors_payload = normalized
         self._ha_started = True
 
         return normalized
+
+    # -------------------------------------------------------------------------
+    # Výpočet statistik z Recorderu
+    # -------------------------------------------------------------------------
+
+    async def _update_recorder_statistics(self, data: dict[str, dict]):
+        """Načte historii z Recorderu a spočítá statistiky podle konfigurovaného intervalu."""
+
+        rec = get_instance(self.hass)
+        now = datetime.now()
+        start_ts = now - timedelta(hours=self._statistics_interval)
+
+        station_prefix = self.entry.title.lower().replace(" ", "_")
+
+        def _load_history(entity_id: str):
+            with rec.get_session() as session:
+                rows = session.execute(
+                    select(States.state, States.last_changed)
+                    .where(
+                        States.entity_id == entity_id,
+                        States.last_changed >= start_ts,
+                    )
+                    .order_by(States.last_changed.asc())
+                ).all()
+            return rows
+
+        for sid, payload in data.items():
+            # weather entity není senzor, statistiky počítáme jen pro senzory
+            if sid not in SENSOR_DEFINITIONS:
+                continue
+
+            entity_id = f"sensor.{station_prefix}_{sid}"
+            rows = await self.hass.async_add_executor_job(_load_history, entity_id)
+
+            values: list[float] = []
+            for state, ts in rows:
+                try:
+                    v = float(state)
+                    if not math.isnan(v):
+                        values.append(v)
+                except Exception:
+                    continue
+
+            if not values:
+                continue
+
+            # Směr větru – kruhové statistiky avg/mode/var
+            if sid == "vitr_smer":
+                sin_sum = 0.0
+                cos_sum = 0.0
+                for val in values:
+                    rad = math.radians(val)
+                    sin_sum += math.sin(rad)
+                    cos_sum += math.cos(rad)
+
+                count = len(values)
+                avg_sin = sin_sum / count
+                avg_cos = cos_sum / count
+
+                avg_deg = math.degrees(math.atan2(avg_sin, avg_cos))
+                if avg_deg < 0:
+                    avg_deg += 360.0
+
+                rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
+                mode_deg = Counter(rounded).most_common(1)[0][0]
+
+                r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
+                if 0.001 < r_vector < 1.0:
+                    var_deg = math.degrees(math.sqrt(-2.0 * math.log(r_vector)))
+                else:
+                    var_deg = 0.0
+
+                payload["attributes"]["stats_avg"] = round(avg_deg, 1)
+                payload["attributes"]["stats_mode"] = round(mode_deg, 1)
+                payload["attributes"]["stats_var"] = round(min(var_deg, 180.0), 1)
+
+            # Ostatní senzory – jen min/max
+            else:
+                payload["attributes"]["stats_min"] = min(values)
+                payload["attributes"]["stats_max"] = max(values)
 
     # -------------------------------------------------------------------------
     # Normalize API payload into HA sensor format
@@ -422,7 +511,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 },
             }
 
-        # DIAGNOSTIKA – přidáme do weather entity
+        # DIAGNOSTIKA – přidáme do weather entity, pokud existuje
         if "weather" in result:
             result["weather"]["attributes"]["history_queue_length"] = self._diag_queue_length
             result["weather"]["attributes"]["history_worker_running"] = self._diag_worker_running
@@ -490,7 +579,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         return result
 
     # -------------------------------------------------------------------------
-    # Rolling 24h statistics
+    # Rolling 24h statistics (původní logika – může být ignorována frontendem)
     # -------------------------------------------------------------------------
 
     def _update_rolling_stats(self, data: dict[str, dict]):
@@ -511,7 +600,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             current_series = self._rolling_history[sid]
 
             values_only = [pt[1] for pt in current_series]
-            if values_only:
+            if values_only and sid != "vitr_smer":
                 payload["attributes"]["min"] = min(values_only)
                 payload["attributes"]["max"] = max(values_only)
 
