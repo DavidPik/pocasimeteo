@@ -150,7 +150,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             )
 
         # Přidáme měření do fronty pro background worker
-        self._history_queue.extend(sorted_measurements)
+        self._history_queue = list(sorted_measurements)
 
         # Worker se spouští jen když HA už běží
         if self._ha_started:
@@ -165,7 +165,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         station_prefix = self.entry.title.lower().replace(" ", "_")
 
         # Velikost dávky – kolik bodů historie zpracujeme v jednom běhu
-        batch_size = 48
+        batch_size = 10
 
         while self._history_queue:
             batch: list[dict] = []
@@ -176,7 +176,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             await self._import_history_batch(station_prefix, batch)
 
             # Uvolníme event loop, aby neblokoval HA
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.5)
 
         _LOGGER.debug("Background worker pro import historie dokončil práci")
 
