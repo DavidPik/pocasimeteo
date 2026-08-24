@@ -5,17 +5,27 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from homeassistant.components.weather import WeatherEntity, WeatherEntityFeature
+from homeassistant.components.weather import WeatherEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, CONF_STATION, ATTR_STATION_LOCATION, ATTR_API_TIMESTAMP, ATTR_DAILY_RAIN, CONF_SENSORS, SENSOR_DEFINITIONS
+from .const import (
+    DOMAIN,
+    CONF_STATION,
+    ATTR_STATION_LOCATION,
+    ATTR_API_TIMESTAMP,
+    ATTR_DAILY_RAIN,
+    CONF_SENSORS,
+    CONF_STATISTICS_INTERVAL,
+    SENSOR_DEFINITIONS,
+)
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -27,6 +37,7 @@ async def async_setup_entry(
     coordinator: PocasimeteoDataUpdateCoordinator = store["coordinator"]
 
     async_add_entities([PocasimeteoWeather(coordinator, entry)])
+
 
 class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], WeatherEntity):
     """Hlavní weather entita pro PočasíMeteo provázaná s koordinátorem."""
@@ -43,8 +54,6 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         self._attr_unique_id = entry.entry_id
         self._attr_name = self._entry.data.get(CONF_STATION) or "PočasíMeteo"
 
-        # ARCHITEKTURA: Tato meteostanice poskytuje pouze aktuální lokální data.
-        # Předpověď počasí je vypnutá, abychom zamezili chybám NotImplementedError.
         self._attr_supported_features = 0
 
         self._attr_device_info = DeviceInfo(
@@ -56,7 +65,6 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     #
     # === STANDARD HA WEATHERENTITY API ===
-    # Tyto vlastnosti Home Assistant automaticky publikuje ve stavovém objektu na frontend.
     #
 
     @property
@@ -155,48 +163,36 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Doplňkové minimální atributy, které standardní weather neumí předat."""
+        """Doplňkové atributy, které standardní weather neumí předat."""
         attrs: dict = {}
 
-        # 1. Název lokality vrácený ze serveru a čas poslední aktualizace API
         if ATTR_STATION_LOCATION in self.coordinator.station_metadata:
             attrs[ATTR_STATION_LOCATION] = self.coordinator.station_metadata[ATTR_STATION_LOCATION]
         
         attrs[ATTR_API_TIMESTAMP] = datetime.now().isoformat()
 
-        # Denní srážky – přímo z API payloadu uloženého v coordinatoru
         daily_rain = None
-
-        # Coordinator ukládá syrový API payload do sensors_payload? Ne. Musíme použít station_metadata.
         if "srazky_den" in self.coordinator.station_metadata:
             daily_rain = self.coordinator.station_metadata["srazky_den"]
         else:
-            # Fallback – pokud metadata nejsou, vezmeme hodnotu z posledního raw API payloadu
             raw = getattr(self.coordinator, "data", {})
             if isinstance(raw, dict):
                 daily_rain = raw.get("SrazkyDen")
 
         attrs[ATTR_DAILY_RAIN] = daily_rain if daily_rain is not None else 0
 
-        # Ponecháme základní update_interval pro stabilitu
-        attrs["update_interval"] = 5
+        # Publikace intervalu pro statistiky (podle konfigurace integrace)
+        attrs["statistics_interval"] = self._entry.options.get(CONF_STATISTICS_INTERVAL)
 
-        # 3. Dynamický seznam senzorů s jejich reálnými sjednocenými entity_id v HA systému.
-        # ARCHITEKTURA FRONTENDU: Karta prochází toto pole a okamžitě ví, ze kterých 
-        # sensor entit má načítat historii pro vykreslení jednotlivých dlaždic grafů.
-        sensors_meta: list[dict] = []
-        
-        # ARCHITEKTURA FRONTENDU: Sestavíme seznam senzorů okamžitě bez čekání na stavový registr HA.
-        # Tím karta získá strukturu grafů ihned při prvním vykreslení stránky.
+        # Ponecháme základní update_interval pro stabilitu (z options, ne natvrdo)
+        attrs["update_interval"] = self._entry.options.get("update_interval", 5)
+
         station_prefix = self.entity_id.split(".")[1]
         sensors_meta: list[dict] = []
         
-        # 1. Nejprve projdeme všechny senzory, které integrace nativně zná z const.py a options
         for sid, meta in SENSOR_DEFINITIONS.items():
-            # Načteme uživatelské nastavení (viditelnost, pořadí) z options, nebo výchozí z const.py
             opts = self._entry.options.get(CONF_SENSORS, {}).get(sid, {})
             
-            # Pokud uživatel v nastavení integrace senzor skryl, na kartu ho neposíláme
             if not opts.get("visible", meta.get("type") == "primary" or True):
                 continue
 
@@ -209,9 +205,7 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
                 "visible": True,
             })
 
-        # 2. Dynamicky doplníme nová čidla z API, která nejsou v základní definici const.py
         for sid, payload in self.coordinator.sensors_payload.items():
-            # Přeskočíme ty, které jsme již přidali v prvním kroku
             if any(s["id"] == sid for s in sensors_meta):
                 continue
                 
@@ -228,12 +222,10 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
                 "visible": True,
             })
 
-        # Seřadíme seznam podle definovaného pořadí (order)
         sensors_meta.sort(key=lambda x: x["order"])
 
         attrs["sensors"] = sensors_meta
 
-        # DIAGNOSTIKA – doplněné atributy
         attrs["history_queue_length"] = self.coordinator._diag_queue_length
         attrs["history_worker_running"] = self.coordinator._diag_worker_running
         attrs["history_missing_count"] = self.coordinator._diag_missing_count
