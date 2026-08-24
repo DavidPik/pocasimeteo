@@ -44,46 +44,47 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _history_exists(self, entity_id: str, ts: datetime) -> bool:
+        """Ověří v DB existenci bodu. Spouští se bezpečně v executor jobu."""
         rec = get_instance(self.hass)
 
         def _check():
             with rec.get_session() as session:
                 q = select(States).where(
                     States.entity_id == entity_id,
-                    States.last_changed == ts
+                    States.last_changed == ts,
                 )
                 return session.execute(q).first() is not None
 
-        # Použijeme recorder executor, jak HA doporučuje
-        return await rec.async_add_executor_job(_check)
+        return await self.hass.async_add_executor_job(_check)
 
     async def _insert_history_point(self, entity_id: str, value, ts: datetime):
         """Bezpečně vloží historický stav se správným provázáním cizích klíčů DB."""
         rec = get_instance(self.hass)
+
         def _insert():
             with rec.get_session() as session:
                 # 1. Zjistíme nebo vytvoříme metadata_id pro danou entitu (vyžadováno od HA 2023.x+)
                 meta_row = session.execute(
                     select(StatesMeta).where(StatesMeta.entity_id == entity_id)
                 ).scalar_one_or_none()
-                
+
                 if not meta_row:
                     meta_row = StatesMeta(entity_id=entity_id)
                     session.add(meta_row)
                     session.flush()
-                
+
                 metadata_id = meta_row.metadata_id
 
                 # 2. Vytvoříme prázdné atributy, které vyžaduje schéma
                 attr_row = session.execute(
                     select(StateAttributes).where(StateAttributes.shared_attrs == "{}")
                 ).scalar_one_or_none()
-                
+
                 if not attr_row:
                     attr_row = StateAttributes(shared_attrs="{}")
                     session.add(attr_row)
                     session.flush()
-                
+
                 attributes_id = attr_row.attributes_id
 
                 # 3. Zapíšeme samotný historický stav
@@ -93,28 +94,38 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     attributes_id=attributes_id,
                     state=str(value),
                     last_changed=ts,
-                    last_updated=ts
+                    last_updated=ts,
                 )
                 session.add(row)
                 session.commit()
 
-        await rec.async_add_executor_job(_insert)
+        await self.hass.async_add_executor_job(_insert)
 
     # -------------------------------------------------------------------------
-    # Import full 5-minute history from API
+    # Pomalý import historie – příprava fronty + background worker
     # -------------------------------------------------------------------------
 
     async def _import_history(self, measurements: list[dict]):
-        """Zpracuje historii z JSONu API a doplní chybějící body do databáze."""
+        """
+        Zpracuje historii z JSONu API:
+        - spočítá SrazkyIntenzita pro všechny body,
+        - uloží je do fronty,
+        - spustí background worker, který je po dávkách zapisuje do Recorderu.
+        """
+        if not measurements:
+            _LOGGER.debug("Import historie: prázdný seznam měření, nic se neimportuje")
+            return
+
+        # Seřadíme historii podle času
         sorted_measurements = sorted(
             measurements,
-            key=lambda m: datetime.fromisoformat(m["Datum"].replace("Z", "+00:00"))
+            key=lambda m: datetime.fromisoformat(m["Datum"]),
         )
 
         previous_rain = None
         previous_ts = None
 
-        # Výpočet derivace intenzity srážek (mm/h)
+        # Výpočet derivace intenzity srážek (mm/h) pro celou sérii
         for m in sorted_measurements:
             ts_raw = m.get("Datum")
             if not ts_raw:
@@ -123,6 +134,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             ts = datetime.fromisoformat(ts_raw)
             # převod na naivní UTC (API posílá lokální čas)
             ts = ts.replace(tzinfo=None)
+
             try:
                 rain_total = float(m.get("SrazkyDen", 0))
             except Exception:
@@ -144,54 +156,101 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             previous_ts = ts
 
         if sorted_measurements:
-            self._latest_rain_intensity = sorted_measurements[-1].get("SrazkyIntenzita", 0.0)
+            self._latest_rain_intensity = sorted_measurements[-1].get(
+                "SrazkyIntenzita", 0.0
+            )
 
-        # Samotný bezpečný import do DB se sjednocením klíčů podle const.py
+        # Uložíme celou historii do fronty pro background worker
+        self._history_queue = list(sorted_measurements)
+        _LOGGER.debug(
+            "Fronta historie PočasíMeteo připravena: %d bodů",
+            len(self._history_queue),
+        )
+
+        # Spustíme worker, pokud už neběží
+        if self._history_task is None or self._history_task.done():
+            _LOGGER.debug("Spouštím background worker pro import historie PočasíMeteo")
+            self._history_task = self.hass.async_create_task(self._history_worker())
+        else:
+            _LOGGER.debug("Background worker pro import historie už běží, nový start přeskočen")
+
+    async def _history_worker(self):
+        """
+        Background worker, který po malých dávkách zapisuje historii do Recorderu,
+        aby neblokoval HA Green ani bootstrap.
+        """
+        if not self._history_queue:
+            _LOGGER.debug("Background worker: fronta prázdná, nic se neimportuje")
+            return
+
         station_prefix = self.entry.title.lower().replace(" ", "_")
 
-        for m in sorted_measurements:
-            ts_raw = m.get("Datum")
-            if not ts_raw:
-                continue
+        # Převodní slovník z API klíčů na interní ID senzorů z const.py
+        api_to_internal_mapping = {
+            "teplotavnejsi": "teplota_vnejsi",
+            "vlhkostvnejsi": "vlhkost_vnejsi",
+            "tlakrel": "tlak_relativni",
+            "srazkyintenzita": "intenzita_srazek",
+            "vitr": "vitr_rychlost",
+            "vitrnarazy": "vitr_narazy",
+            "vitrsmer": "vitr_smer",
+            "slunzareni": "slunecni_zareni",
+            "uvindex": "uv_index",
+            "teplotavnitrni": "teplota_vnitrni",
+            "vlhkostvnitrni": "vlhkost_vnitrni",
+        }
 
-            ts = datetime.fromisoformat(ts_raw)
-            # převod na naivní UTC (API posílá lokální čas)
-            ts = ts.replace(tzinfo=None)
-            # Převodní slovník z API klíčů na interní ID senzorů z const.py
-            api_to_internal_mapping = {
-                "teplotavnejsi": "teplota_vnejsi",
-                "vlhkostvnejsi": "vlhkost_vnejsi",
-                "tlakrel": "tlak_relativni",
-                "srazkyintenzita": "intenzita_srazek",
-                "vitr": "vitr_rychlost",
-                "vitrnarazy": "vitr_narazy",
-                "vitrsmer": "vitr_smer",
-                "slunzareni": "slunecni_zareni",
-                "uvindex": "uv_index",
-                "teplotavnitrni": "teplota_vnitrni",
-                "vlhkostvnitrni": "vlhkost_vnitrni"
-            }
+        _LOGGER.debug(
+            "Background worker: start, %d bodů v frontě",
+            len(self._history_queue),
+        )
 
-            for key, value in m.items():
-                if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
+        # Zpracováváme historii po dávkách, aby se HA nezadusil
+        batch_size = 10
+
+        while self._history_queue:
+            batch = self._history_queue[:batch_size]
+            self._history_queue = self._history_queue[batch_size:]
+
+            for m in batch:
+                ts_raw = m.get("Datum")
+                if not ts_raw:
                     continue
 
-                # Vyhledáváme v mapování s převedením klíče na malá písmena
-                key_lower = key.lower()
-                internal_sid = api_to_internal_mapping.get(key_lower, key_lower)
-                entity_id = f"sensor.{station_prefix}_{internal_sid}"
+                ts = datetime.fromisoformat(ts_raw)
+                ts = ts.replace(tzinfo=None)
 
-                try:
-                    v = float(value)
-                except Exception:
-                    v = value
+                for key, value in m.items():
+                    if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
+                        continue
 
-                if v is None:
-                    continue
+                    key_lower = key.lower()
+                    internal_sid = api_to_internal_mapping.get(key_lower, key_lower)
+                    entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
-                # Zkontrolujeme a zapíšeme bod pod správným systémovým entity_id
-                if not await self._history_exists(entity_id, ts):
-                    await self._insert_history_point(entity_id, v, ts)
+                    try:
+                        v = float(value)
+                    except Exception:
+                        v = value
+
+                    if v is None:
+                        continue
+
+                    try:
+                        if not await self._history_exists(entity_id, ts):
+                            await self._insert_history_point(entity_id, v, ts)
+                    except Exception as e:
+                        _LOGGER.debug(
+                            "Background worker: zápis bodu %s @ %s selhal: %s",
+                            entity_id,
+                            ts,
+                            e,
+                        )
+
+            # Krátká pauza, aby event loop měl prostor pro ostatní úlohy
+            await asyncio.sleep(0.5)
+
+        _LOGGER.debug("Background worker: import historie PočasíMeteo dokončen")
 
     # -------------------------------------------------------------------------
     # Coordinator initialization
@@ -203,7 +262,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         update_interval_minutes = entry.options.get(
             CONF_UPDATE_INTERVAL,
-            entry.data.get(CONF_UPDATE_INTERVAL, 5)
+            entry.data.get(CONF_UPDATE_INTERVAL, 5),
         )
 
         self._sensor_options = entry.options.get(CONF_SENSORS, DEFAULT_SENSOR_OPTIONS)
@@ -215,13 +274,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             update_interval=timedelta(minutes=update_interval_minutes),
         )
 
-        # ARCHITEKTURA FRONTENDU / PAMĚŤ: Zde budeme držet čistou časovou řadu bodů 
+        # ARCHITEKTURA FRONTENDU / PAMĚŤ: Zde budeme držet čistou časovou řadu bodů
         # (hodnota, timestamp) za posledních 24 hodin, ze které průběžně počítáme klouzavé statistiky.
         self._rolling_history: dict[str, list[tuple[datetime, float]]] = {}
         self._latest_rain_intensity: float = 0.0
         self.station_metadata = {}
         self.sensors_payload = {}
-        self._history_task = None
+
+        # Pomalý import historie – fronta + background task
+        self._history_queue: list[dict] = []
+        self._history_task: asyncio.Task | None = None
 
     # -------------------------------------------------------------------------
     # Main API update
@@ -245,50 +307,51 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if isinstance(raw, dict) and "Zprava" in raw:
             raise UpdateFailed(f"PočasíMeteo API Error: {raw['Zprava']}")
 
-        # Zpracování metadat stanice a extrakce payloadu počasí
-        history_payload: list[dict] = []
+        history_payload = None
 
+        # Zpracování metadat stanice a extrakce payloadu počasí
         if isinstance(raw, list) and len(raw) > 0:
             # První prvek pole obsahuje metadata stanice
             meta_payload = raw[0]
             if isinstance(meta_payload, dict):
-                self.station_metadata["station_name"] = self.entry.data.get(CONF_STATION)
-                self.station_metadata["lokalita_stanice"] = meta_payload.get("LokalitaStanice")
-                if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
-                    self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
+                self.station_metadata["station_name"] = self.entry.data.get(
+                    CONF_STATION
+                )
+                self.station_metadata["lokalita_stanice"] = meta_payload.get(
+                    "LokalitaStanice"
+                )
+                if "Webkamera" in meta_payload and isinstance(
+                    meta_payload["Webkamera"], dict
+                ):
+                    self.station_metadata["webcamera_url"] = meta_payload[
+                        "Webkamera"
+                    ].get("UrlWebcam")
 
             # Nový formát API: raw = [ metadata, měření1, měření2, ... ]
-            if len(raw) > 1:
-                # celá historie měření (24h) – od aktuálního záznamu do minulosti
+            if isinstance(raw, list) and len(raw) > 1:
+                # 1) metadata zůstává v raw[0]
+                # 2) celá historie měření (24h)
                 history_payload = raw[1:]
-                # aktuální záznam = první prvek historie (nejnovější měření)
+                # 3) aktuální záznam = první prvek historie
                 raw = history_payload[0]
             else:
-                raise UpdateFailed("API response structure valid, but weather payload missing")
+                raise UpdateFailed(
+                    "API response structure valid, but weather payload missing"
+                )
 
         # Uložíme denní srážky do metadata, aby je weather entita mohla předat frontendové kartě
         if "SrazkyDen" in raw:
             self.station_metadata["srazky_den"] = raw["SrazkyDen"]
 
-        # Import historie z nového API formátu – běží na pozadí, jen pokud už neběží
+        # Import historie z nového API formátu – příprava fronty + background worker
         if isinstance(history_payload, list) and len(history_payload) > 0:
             try:
-                if self._history_task is None or self._history_task.done():
-                    _LOGGER.debug(
-                        "Spouštím import historie PočasíMeteo (%d bodů)",
-                        len(history_payload),
-                    )
-                    self._history_task = self.hass.async_create_task(
-                        self._import_history(history_payload)
-                    )
-                else:
-                    _LOGGER.debug("Import historie PočasíMeteo už běží, nový start přeskočen")
+                await self._import_history(history_payload)
             except Exception as hist_err:
                 _LOGGER.warning("Import historie PočasíMeteo selhal: %s", hist_err)
 
         # Fallback výpočet intenzity srážek, pokud API neposílá historii
         if "SrazkyDen" in raw:
-
             try:
                 # Rolling history pro denní srážky si musíme vytvořit sami
                 rain_series = self._rolling_history.setdefault("srazky_den_raw", [])
@@ -306,7 +369,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Uložíme fallback intenzitu do Recorderu
         if self._latest_rain_intensity > 0:
-            entity_id = f"sensor.{self.entry.title.lower().replace(' ', '_')}_intenzita_srazek"
+            entity_id = (
+                f"sensor.{self.entry.title.lower().replace(' ', '_')}_intenzita_srazek"
+            )
             ts = datetime.now()
             await self._insert_history_point(entity_id, self._latest_rain_intensity, ts)
 
@@ -365,10 +430,19 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Dynamické objevování čidel (Fallback)
         for api_key, value in raw.items():
-            if api_key in ("Datum", "SrazkyDen", "LokalitaStanice", "DoplCidlaJson", "Historie", "Webkamera"):
+            if api_key in (
+                "Datum",
+                "SrazkyDen",
+                "LokalitaStanice",
+                "DoplCidlaJson",
+                "Historie",
+                "Webkamera",
+            ):
                 continue
 
-            already_mapped = any(m["api_key"] == api_key for m in SENSOR_DEFINITIONS.values())
+            already_mapped = any(
+                m["api_key"] == api_key for m in SENSOR_DEFINITIONS.values()
+            )
             if already_mapped:
                 continue
 
@@ -381,12 +455,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             meta = get_dynamic_sensor_meta(api_key)
             sid = api_key.lower()
 
-            opts = self._sensor_options.get(sid, {
-                "order": meta["order"],
-                "color": meta["color"],
-                "style": "smooth",
-                "visible": True,
-            })
+            opts = self._sensor_options.get(
+                sid,
+                {
+                    "order": meta["order"],
+                    "color": meta["color"],
+                    "style": "smooth",
+                    "visible": True,
+                },
+            )
 
             result[sid] = {
                 "value": value,
@@ -436,7 +513,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if values_only:
                 current_min = min(values_only)
                 current_max = max(values_only)
-                
+
                 # ARCHITEKTURA FRONTENDU: Vkládáme min/max do atributů, karta je kreslí do popisků pod grafem
                 payload["attributes"]["min"] = current_min
                 payload["attributes"]["max"] = current_max
@@ -473,7 +550,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     var_deg = 0.0
 
                 # ARCHITEKTURA FRONTENDU / ODCHYLKA: Tyto atributy jsou nestandardní.
-                # Předáváme je přes senzor směru větru, aby si je Canvas prvek větrné růžice mohl 
+                # Předáváme je přes senzor směru větru, aby si je Canvas prvek větrné růžice mohl
                 # okamžitě vytáhnout a nakreslit osy (průměr, modus, výseč rozptylu).
                 payload["attributes"]["vitr_smer_avg"] = round(avg_deg, 1)
                 payload["attributes"]["vitr_smer_mode"] = round(mode_deg, 1)
