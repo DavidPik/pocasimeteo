@@ -4,7 +4,7 @@
 [![GitHub release](https://img.shields.io/github/release/davidpik/pocasimeteo.svg)](https://github.com/davidpik/pocasimeteo/releases)
 [![License](https://img.shields.io/github/license/davidpik/pocasimeteo.svg)](LICENSE)
 
-PočasíMeteo je zakázková integrace pro Home Assistant (plně optimalizovaná pro hardware Home Assistant Green), která zajišťuje stahování dat v reálném čase i doplňování historie z osobních meteostanic registrovaných na portálu **PočasíMeteo.cz**.
+PočasíMeteo je specifická integrace pro Home Assistant (plně optimalizovaná pro hardware Home Assistant Green), která zajišťuje stahování dat v reálném čase i doplňování historie z osobních meteostanic registrovaných na portálu **PočasíMeteo.cz**.
 
 Tato integrace úzce spolupracuje s dedikovanou frontendovou kartou `pocasimeteo-card.js` a tvoří s ní ucelený meteorologický dashboard.
 
