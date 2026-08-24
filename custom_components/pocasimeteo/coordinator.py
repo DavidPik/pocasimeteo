@@ -60,7 +60,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     async def _insert_history_point(self, entity_id: str, value, ts: datetime):
         """Bezpečně vloží historický stav se správným provázáním cizích klíčů DB."""
         rec = get_instance(self.hass)
-            def _insert():
+        def _insert():
             with rec.get_session() as session:
                 # 1. Zjistíme nebo vytvoříme metadata_id pro danou entitu (vyžadováno od HA 2023.x+)
                 meta_row = session.execute(
