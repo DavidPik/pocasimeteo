@@ -7,7 +7,7 @@ import asyncio
 import math
 import json
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -122,6 +122,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
 
             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            # převod na čisté UTC bez tzinfo (naivní datetime)
+            ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
             try:
                 rain_total = float(m.get("SrazkyDen", 0))
             except Exception:
@@ -152,8 +154,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             ts_raw = m.get("Datum")
             if not ts_raw:
                 continue
-
-            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).astimezone(timezone.utc).replace(tzinfo=None)
 
             # Převodní slovník z API klíčů na interní ID senzorů z const.py
             api_to_internal_mapping = {
@@ -310,7 +311,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # Uložíme fallback intenzitu do Recorderu
         if self._latest_rain_intensity > 0:
             entity_id = f"sensor.{self.entry.title.lower().replace(' ', '_')}_intenzita_srazek"
-            ts = datetime.now()
+            ts = datetime.now(timezone.utc).replace(tzinfo=None)
             await self._insert_history_point(entity_id, self._latest_rain_intensity, ts)
 
         raw["SrazkyIntenzita"] = self._latest_rain_intensity
