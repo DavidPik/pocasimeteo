@@ -232,5 +232,16 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         sensors_meta.sort(key=lambda x: x["order"])
 
         attrs["sensors"] = sensors_meta
-        return attrs
 
+        # DIAGNOSTIKA – doplněné atributy
+        attrs["history_queue_length"] = self.coordinator._diag_queue_length
+        attrs["history_worker_running"] = self.coordinator._diag_worker_running
+        attrs["history_missing_count"] = self.coordinator._diag_missing_count
+        attrs["history_last_batch_size"] = self.coordinator._diag_last_batch_size
+        attrs["history_last_write_ts"] = (
+            self.coordinator._diag_last_write_ts.isoformat()
+            if self.coordinator._diag_last_write_ts
+            else None
+        )
+        
+        return attrs
