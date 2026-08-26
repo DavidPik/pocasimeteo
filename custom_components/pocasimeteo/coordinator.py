@@ -224,7 +224,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             ts = dt_util.as_utc(local_ts).replace(tzinfo=None)
 
             # DIAGNOSTIKA: timestamp posledního zápisu (poslední zpracovaný bod v dávce)
-            self._diag_last_write_ts = ts
+            self._diag_last_write_ts = local_ts
 
             for key, value in m.items():
                 if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
