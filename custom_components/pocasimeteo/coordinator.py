@@ -168,8 +168,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         station_prefix = self.entry.title.lower().replace(" ", "_")
 
-        batch_size = 12  # menší dávky
-        pause = 0.5      # delší pauza mezi dávkami
+        batch_size = 60  # menší dávky
+        pause = 0.1      # delší pauza mezi dávkami
 
         # DIAGNOSTIKA: worker běží
         self._diag_worker_running = True
