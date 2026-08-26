@@ -389,26 +389,46 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         return normalized
 
+    
     # -------------------------------------------------------------------------
-    # Výpočet statistik z Recorderu
+    # Výpočet statistik z Recorderu – OPRAVENÁ VERZE
     # -------------------------------------------------------------------------
 
     async def _update_recorder_statistics(self, data: dict[str, dict]):
         """Načte historii z Recorderu a spočítá statistiky podle konfigurovaného intervalu."""
+        from homeassistant.util import dt as dt_util
 
         rec = get_instance(self.hass)
-        now = datetime.now()
-        start_ts = now - timedelta(hours=self._statistics_interval)
+        
+        # Home Assistant ukládá stavy do DB výhradně v UTC.
+        # Musíme vzít aktuální čas v UTC, aby dotaz na historii lícoval s databází.
+        now_utc = dt_util.utcnow()
+        start_ts_utc = now_utc - timedelta(hours=self._statistics_interval)
 
         station_prefix = self.entry.title.lower().replace(" ", "_")
 
-        def _load_history(entity_id: str):
+        # Mapovací slovník identický s _import_history_batch, abychom sahali pro správná entity_id
+        api_to_internal_mapping = {
+            "teplatavnejsi": "teplota_vnejsi",
+            "vlhkostvnejsi": "vlhkost_vnejsi",
+            "tlakrel": "tlak_relativni",
+            "srazkyintenzita": "intenzita_srazek",
+            "vitr": "vitr_rychlost",
+            "vitrnarazy": "vitr_narazy",
+            "vitrsmer": "vitr_smer",
+            "slunzareni": "slunecni_zareni",
+            "uvindex": "uv_index",
+            "teplotavnitrni": "teplota_vnitrni",
+            "vlhkostvnitrni": "vlhkost_vnitrni",
+        }
+
+        def _load_history(target_entity_id: str):
             with rec.get_session() as session:
                 rows = session.execute(
                     select(States.state, States.last_changed)
                     .where(
-                        States.entity_id == entity_id,
-                        States.last_changed >= start_ts,
+                        States.entity_id == target_entity_id,
+                        States.last_changed >= start_ts_utc,
                     )
                     .order_by(States.last_changed.asc())
                 ).all()
@@ -419,11 +439,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if sid not in SENSOR_DEFINITIONS:
                 continue
 
-            entity_id = f"sensor.{station_prefix}_{sid}"
+            # Převod sid na správné vnitřní ID entity (zohlednění podtržítkových forem)
+            internal_sid = api_to_internal_mapping.get(sid.lower(), sid.lower())
+            entity_id = f"sensor.{station_prefix}_{internal_sid}"
+            
             rows = await self.hass.async_add_executor_job(_load_history, entity_id)
 
             values: list[float] = []
             for state, ts in rows:
+                if state in (None, "", "unknown", "unavailable"):
+                    continue
                 try:
                     v = float(state)
                     if not math.isnan(v):
@@ -432,10 +457,19 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     continue
 
             if not values:
+                # Pokud v DB ještě nejsou data, použijeme jako fallback aktuální hodnotu z API
+                try:
+                    current_val = float(payload["value"])
+                    if not math.isnan(current_val):
+                        values = [current_val]
+                except Exception:
+                    continue
+
+            if not values:
                 continue
 
             # Směr větru – kruhové statistiky avg/mode/var
-            if sid == "vitr_smer":
+            if internal_sid == "vitr_smer":
                 sin_sum = 0.0
                 cos_sum = 0.0
                 for val in values:
@@ -464,7 +498,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 payload["attributes"]["stats_mode"] = round(mode_deg, 1)
                 payload["attributes"]["stats_var"] = round(min(var_deg, 180.0), 1)
 
-            # Ostatní senzory – jen min/max
+            # Ostatní senzory – přesný výpočet min/max za nakonfigurovaný interval
             else:
                 payload["attributes"]["stats_min"] = min(values)
                 payload["attributes"]["stats_max"] = max(values)
