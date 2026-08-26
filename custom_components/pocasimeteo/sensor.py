@@ -93,7 +93,12 @@ class PočasíMeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], S
         if not payload:
             return None
         return payload.get("value")
-        
+
+    @property
+    def force_update(self) -> bool:
+        """Vynutí zápis do stavové databáze HA při každé aktualizaci z koordinátoru."""
+        return True
+
     @property
     def extra_state_attributes(self):
         """
