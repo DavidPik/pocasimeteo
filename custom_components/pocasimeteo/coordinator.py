@@ -217,7 +217,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if not ts_raw:
                 continue
 
-            ts = datetime.fromisoformat(ts_raw).replace(tzinfo=None)
+            # Předpokládáme, že API posílá lokální čas stanice. Převedeme ho na UTC, se kterým pracuje DB.
+            from homeassistant.util import dt as dt_util
+            local_ts = datetime.fromisoformat(ts_raw)
+            # Pokud v const.py nebo jinde máte definované časové pásmo stanice, použijte dt_util.as_utc()
+            ts = dt_util.as_utc(local_ts).replace(tzinfo=None)
 
             # DIAGNOSTIKA: timestamp posledního zápisu (poslední zpracovaný bod v dávce)
             self._diag_last_write_ts = ts
