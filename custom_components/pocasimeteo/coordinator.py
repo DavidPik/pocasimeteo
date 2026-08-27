@@ -412,14 +412,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         rec = get_instance(self.hass)
         
-        # Home Assistant ukládá stavy do DB výhradně v UTC.
-        # Musíme vzít aktuální čas v UTC, aby dotaz na historii lícoval s databází.
+        # PŘEVOD NA UNIX TIMESTAMP: Home Assistant ukládá čas jako číslo v sekundách (sloupec last_changed_ts).
+        # Musíme převést náš počáteční čas na čisté číslo, jinak dotaz selže a vrátí prázdnou historii.
         now_utc = dt_util.utcnow()
         start_ts_utc = now_utc - timedelta(hours=self._statistics_interval)
+        start_timestamp = start_ts_utc.timestamp()
 
-        # Stoprocentně spolehlivý prefix pro stanici GAR632
+        # Očištění prefixu pro stanici gar632
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
-        
+
         # Mapovací slovník identický s _import_history_batch, abychom sahali pro správná entity_id
         api_to_internal_mapping = {
             "teplatavnejsi": "teplota_vnejsi",
@@ -437,13 +438,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         def _load_history(target_entity_id: str):
             with rec.get_session() as session:
+                # OPRAVENÝ SQL DOTAZ: Místo nefunkčního sloupce last_changed se ptáme na moderní last_changed_ts
                 rows = session.execute(
-                    select(States.state, States.last_changed)
+                    select(States.state)
                     .where(
                         States.entity_id == target_entity_id,
-                        States.last_changed >= start_ts_utc,
+                        States.last_changed_ts >= start_timestamp,
                     )
-                    .order_by(States.last_changed.asc())
                 ).all()
             return rows
 
@@ -459,7 +460,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             rows = await self.hass.async_add_executor_job(_load_history, entity_id)
 
             values: list[float] = []
-            for state, ts in rows:
+            for row in rows:
+                state = row[0] # Vytáhneme hodnotu stavu z výsledku řádku
                 if state in (None, "", "unknown", "unavailable"):
                     continue
                 try:
