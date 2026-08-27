@@ -459,20 +459,29 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             
             rows = await self.hass.async_add_executor_job(_load_history, entity_id)
 
+            # OPRAVENÉ PARSOVÁNÍ ŘÁDKŮ Z MODERNÍHO RECORDERU HA:
             values: list[float] = []
-            for row in rows:
-                state = row[0] # Vytáhneme hodnotu stavu z výsledku řádku
-                if state in (None, "", "unknown", "unavailable"):
-                    continue
-                try:
-                    v = float(state)
-                    if not math.isnan(v):
-                        values.append(v)
-                except Exception:
-                    continue
+            
+            # Pokud SQL dotaz z databáze vrátil řádky, zpracujeme je
+            if rows:
+                for row in rows:
+                    # SQLAlchemy vrací řádky jako objekty typu Tuple (např. ('19.0',))
+                    # Musíme bezpečně vytáhnout první prvek z tohoto řádku
+                    state_val = row[0] if isinstance(row, tuple) else row
+                    
+                    if state_val in (None, "", "unknown", "unavailable"):
+                        continue
+                    try:
+                        v = float(state_val)
+                        if not math.isnan(v):
+                            values.append(v)
+                    except Exception:
+                        continue
 
+            # FALLBACK POJISTKA: Pokud je databáze prázdná (nebo worker ještě nedoběhl),
+            # použijeme jako nouzové min/max hodnotu přímo z aktuálního payloadu z API,
+            # ale s mírným rozsahem, aby se frontend nezhroutil do nulové přímky.
             if not values:
-                # Pokud v DB ještě nejsou data, použijeme jako fallback aktuální hodnotu z API
                 try:
                     current_val = float(payload["value"])
                     if not math.isnan(current_val):
@@ -501,7 +510,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     avg_deg += 360.0
 
                 rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
-                mode_deg = Counter(rounded).most_common(1)[0][0]
+                
+                # Bezpečné vytáhnutí modu, pokud pole obsahuje data
+                if rounded:
+                    mode_deg = Counter(rounded).most_common(1)[0][0]
+                else:
+                    mode_deg = current_val
 
                 r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
                 if 0.001 < r_vector < 1.0:
@@ -515,8 +529,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             # Ostatní senzory – přesný výpočet min/max za nakonfigurovaný interval
             else:
-                payload["attributes"]["stats_min"] = min(values)
-                payload["attributes"]["stats_max"] = max(values)
+                calculated_min = min(values)
+                calculated_max = max(values)
+                
+                # Pokud se min a max rovnají (past nulového rozsahu), vytvoříme umělý malý rozsah
+                if calculated_min == calculated_max:
+                    payload["attributes"]["stats_min"] = calculated_min - 0.5
+                    payload["attributes"]["stats_max"] = calculated_max + 0.5
+                else:
+                    payload["attributes"]["stats_min"] = calculated_min
+                    payload["attributes"]["stats_max"] = calculated_max
 
     # -------------------------------------------------------------------------
     # Normalize API payload into HA sensor format
