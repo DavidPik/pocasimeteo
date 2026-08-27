@@ -209,6 +209,21 @@ DEFAULT_OPTIONS = {
 # Fallback metadata pro dynamické senzory
 # ------------------------------------------------------------
 
+# JEDNOTNÉ MAPOVÁNÍ KLÍČŮ Z API NA VNITŘNÍ ID ENTIT PRO CELOU INTEGRACI
+API_TO_INTERNAL_MAPPING = {
+    "teplotavnejsi": "teplota_vnejsi",
+    "vlhkostvnejsi": "vlhkost_vnejsi",
+    "tlakrel": "tlak_relativni",
+    "srazkyintenzita": "intenzita_srazek",
+    "vitr": "vitr_rychlost",
+    "vitrnarazy": "vitr_narazy",
+    "vitrsmer": "vitr_smer",
+    "slunzareni": "slunecni_zareni",
+    "uvindex": "uv_index",
+    "teplotavnitrni": "teplota_vnitrni",
+    "vlhkostvnitrni": "vlhkost_vnitrni",
+}
+
 def get_dynamic_sensor_meta(api_key: str) -> dict:
     """Fallback metadata for dynamically discovered sensors."""
     sid = api_key.lower()
