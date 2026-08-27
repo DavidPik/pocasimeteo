@@ -391,7 +391,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         raw["SrazkyIntenzita"] = self._latest_rain_intensity
 
         normalized = self._normalize_data(raw)
-        self._update_rolling_stats(normalized)
+        self._update_rolling_stats(normalized, history_payload)
 
         # Statistické atributy z Recorderu
         await self._update_recorder_statistics(normalized)
@@ -407,21 +407,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _update_recorder_statistics(self, data: dict[str, dict]):
-        """Načte historii z Recorderu a spočítá statistiky podle konfigurovaného intervalu."""
+        """Načte historii z Recorderu a spočítá statsXXX. Pokud selže, použije hodnoty z API."""
         from homeassistant.util import dt as dt_util
 
         rec = get_instance(self.hass)
-        
-        # PŘEVOD NA UNIX TIMESTAMP: Home Assistant ukládá čas jako číslo v sekundách (sloupec last_changed_ts).
-        # Musíme převést náš počáteční čas na čisté číslo, jinak dotaz selže a vrátí prázdnou historii.
         now_utc = dt_util.utcnow()
         start_ts_utc = now_utc - timedelta(hours=self._statistics_interval)
         start_timestamp = start_ts_utc.timestamp()
 
-        # Očištění prefixu pro stanici gar632
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
 
-        # Mapovací slovník identický s _import_history_batch, abychom sahali pro správná entity_id
         api_to_internal_mapping = {
             "teplatavnejsi": "teplota_vnejsi",
             "vlhkostvnejsi": "vlhkost_vnejsi",
@@ -438,7 +433,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         def _load_history(target_entity_id: str):
             with rec.get_session() as session:
-                # OPRAVENÝ SQL DOTAZ: Místo nefunkčního sloupce last_changed se ptáme na moderní last_changed_ts
                 rows = session.execute(
                     select(States.state)
                     .where(
@@ -449,26 +443,18 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             return rows
 
         for sid, payload in data.items():
-            # weather entity není senzor, statistiky počítáme jen pro senzory
             if sid not in SENSOR_DEFINITIONS:
                 continue
 
-            # Převod sid na správné vnitřní ID entity (zohlednění podtržítkových forem)
             internal_sid = api_to_internal_mapping.get(sid.lower(), sid.lower())
             entity_id = f"sensor.{station_prefix}_{internal_sid}"
             
             rows = await self.hass.async_add_executor_job(_load_history, entity_id)
 
-            # OPRAVENÉ PARSOVÁNÍ ŘÁDKŮ Z MODERNÍHO RECORDERU HA:
             values: list[float] = []
-            
-            # Pokud SQL dotaz z databáze vrátil řádky, zpracujeme je
             if rows:
                 for row in rows:
-                    # SQLAlchemy vrací řádky jako objekty typu Tuple (např. ('19.0',))
-                    # Musíme bezpečně vytáhnout první prvek z tohoto řádku
                     state_val = row[0] if isinstance(row, tuple) else row
-                    
                     if state_val in (None, "", "unknown", "unavailable"):
                         continue
                     try:
@@ -478,21 +464,19 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     except Exception:
                         continue
 
-            # FALLBACK POJISTKA: Pokud je databáze prázdná (nebo worker ještě nedoběhl),
-            # použijeme jako nouzové min/max hodnotu přímo z aktuálního payloadu z API,
-            # ale s mírným rozsahem, aby se frontend nezhroutil do nulové přímky.
-            if not values:
-                try:
-                    current_val = float(payload["value"])
-                    if not math.isnan(current_val):
-                        values = [current_val]
-                except Exception:
-                    continue
-
-            if not values:
+            # CRITICAL FALLBACK LOGIC: Pokud DB vrátí méně než 2 řádky, použijeme hodnoty z API (Krok 1)
+            if len(values) < 2:
+                if internal_sid == "vitr_smer":
+                    payload["attributes"]["stats_avg"] = payload["attributes"].get("vitr_smer_avg", payload["value"])
+                    payload["attributes"]["stats_mode"] = payload["attributes"].get("vitr_smer_mode", payload["value"])
+                    payload["attributes"]["stats_var"] = payload["attributes"].get("vitr_smer_var", 0.0)
+                else:
+                    # Pokud nemáme dost bodů v DB, vezmeme min/max spočítané z čistého JSONu
+                    payload["attributes"]["stats_min"] = payload["attributes"].get("min", payload["value"])
+                    payload["attributes"]["stats_max"] = payload["attributes"].get("max", payload["value"])
                 continue
 
-            # Směr větru – kruhové statistiky avg/mode/var
+            # Pokud máme v DB dostatek bodů (>= 2), provedeme standardní databázový výpočet
             if internal_sid == "vitr_smer":
                 sin_sum = 0.0
                 cos_sum = 0.0
@@ -510,35 +494,17 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     avg_deg += 360.0
 
                 rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
-                
-                # Bezpečné vytáhnutí modu, pokud pole obsahuje data
-                if rounded:
-                    mode_deg = Counter(rounded).most_common(1)[0][0]
-                else:
-                    mode_deg = current_val
+                mode_deg = Counter(rounded).most_common(1)[0][0] if rounded else values[0]
 
                 r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
-                if 0.001 < r_vector < 1.0:
-                    var_deg = math.degrees(math.sqrt(-2.0 * math.log(r_vector)))
-                else:
-                    var_deg = 0.0
+                var_deg = math.degrees(math.sqrt(-2.0 * math.log(r_vector))) if 0.001 < r_vector < 1.0 else 0.0
 
                 payload["attributes"]["stats_avg"] = round(avg_deg, 1)
                 payload["attributes"]["stats_mode"] = round(mode_deg, 1)
                 payload["attributes"]["stats_var"] = round(min(var_deg, 180.0), 1)
-
-            # Ostatní senzory – přesný výpočet min/max za nakonfigurovaný interval
             else:
-                calculated_min = min(values)
-                calculated_max = max(values)
-                
-                # Pokud se min a max rovnají (past nulového rozsahu), vytvoříme umělý malý rozsah
-                if calculated_min == calculated_max:
-                    payload["attributes"]["stats_min"] = calculated_min - 0.5
-                    payload["attributes"]["stats_max"] = calculated_max + 0.5
-                else:
-                    payload["attributes"]["stats_min"] = calculated_min
-                    payload["attributes"]["stats_max"] = calculated_max
+                payload["attributes"]["stats_min"] = min(values)
+                payload["attributes"]["stats_max"] = max(values)
 
     # -------------------------------------------------------------------------
     # Normalize API payload into HA sensor format
@@ -653,40 +619,72 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # Rolling 24h statistics (původní logika – může být ignorována frontendem)
     # -------------------------------------------------------------------------
 
-    def _update_rolling_stats(self, data: dict[str, dict]):
-        now = datetime.now()
-        threshold = now - timedelta(hours=24)
+    def _update_rolling_stats(self, data: dict[str, dict], history_payload: list[dict]):
+        """
+        Spočítá statistiky min/max a větrné charakteristiky přímo ze surového
+        JSON datasetu z API. Tyto hodnoty jsou stoprocentně spolehlivé.
+        """
+        if not history_payload or not isinstance(history_payload, list):
+            return
 
+        api_to_internal_mapping = {
+            "teplatavnejsi": "teplota_vnejsi",
+            "vlhkostvnejsi": "vlhkost_vnejsi",
+            "tlakrel": "tlak_relativni",
+            "srazkyintenzita": "intenzita_srazek",
+            "vitr": "vitr_rychlost",
+            "vitrnarazy": "vitr_narazy",
+            "vitrsmer": "vitr_smer",
+            "slunzareni": "slunecni_zareni",
+            "uvindex": "uv_index",
+            "teplotavnitrni": "teplota_vnitrni",
+            "vlhkostvnitrni": "vlhkost_vnitrni",
+        }
+
+        # Vytvoříme si dočasné kontejnery pro sběr bodů z celého JSON balíku
+        extracted_data: dict[str, list[float]] = {}
+
+        for m in history_payload:
+            for api_key, value in m.items():
+                if value in (None, "", " ", "N/A", "--"):
+                    continue
+                try:
+                    v = float(value)
+                    if math.isnan(v):
+                        continue
+                    key_lower = api_key.lower()
+                    internal_sid = api_to_internal_mapping.get(key_lower, key_lower)
+                    extracted_data.setdefault(internal_sid, []).append(v)
+                except Exception:
+                    continue
+
+        # Naplníme atributy v hlavním payloadu
         for sid, payload in data.items():
-            value = payload["value"]
-            if not isinstance(value, (int, float)):
+            # Najdeme data příslušející tomuto vnitřnímu ID
+            values = extracted_data.get(sid, [])
+            
+            # Pokud v historii z API pro daný senzor nic není, dáme jako fallback aktuální hodnotu
+            if not values and payload.get("value") is not None:
+                try:
+                    v_current = float(payload["value"])
+                    if not math.isnan(v_current):
+                        values = [v_current]
+                except Exception:
+                    pass
+
+            if not values:
                 continue
 
-            sensor_series = self._rolling_history.setdefault(sid, [])
-            sensor_series.append((now, float(value)))
-
-            self._rolling_history[sid] = [
-                pt for pt in sensor_series if pt[0] >= threshold
-            ]
-            current_series = self._rolling_history[sid]
-
-            values_only = [pt[1] for pt in current_series]
-            if values_only and sid != "vitr_smer":
-                payload["attributes"]["min"] = min(values_only)
-                payload["attributes"]["max"] = max(values_only)
-
-            if sid == "vitr_smer" and values_only:
+            # A. Speciální kruhová matematika pro směr větru
+            if sid == "vitr_smer":
                 sin_sum = 0.0
                 cos_sum = 0.0
-                angles = []
-
-                for val in values_only:
-                    angles.append(val)
+                for val in values:
                     rad = math.radians(val)
                     sin_sum += math.sin(rad)
                     cos_sum += math.cos(rad)
 
-                count = len(values_only)
+                count = len(values)
                 avg_sin = sin_sum / count
                 avg_cos = cos_sum / count
 
@@ -694,15 +692,17 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if avg_deg < 0:
                     avg_deg += 360.0
 
-                rounded = [round(a / 22.5) * 22.5 % 360 for a in angles]
+                rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
                 mode_deg = Counter(rounded).most_common(1)[0][0]
 
                 r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
-                if 0.001 < r_vector < 1.0:
-                    var_deg = math.degrees(math.sqrt(-2.0 * math.log(r_vector)))
-                else:
-                    var_deg = 0.0
+                var_deg = math.degrees(math.sqrt(-2.0 * math.log(r_vector))) if 0.001 < r_vector < 1.0 else 0.0
 
                 payload["attributes"]["vitr_smer_avg"] = round(avg_deg, 1)
                 payload["attributes"]["vitr_smer_mode"] = round(mode_deg, 1)
                 payload["attributes"]["vitr_smer_var"] = round(min(var_deg, 180.0), 1)
+
+            # B. Standardní min/max pro všechny ostatní senzory
+            else:
+                payload["attributes"]["min"] = min(values)
+                payload["attributes"]["max"] = max(values)
