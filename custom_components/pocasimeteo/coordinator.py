@@ -29,10 +29,10 @@ from .const import (
     DEFAULT_SENSOR_OPTIONS,
     DEFAULT_STATISTICS_INTERVAL,
     get_dynamic_sensor_meta,
+    API_TO_INTERNAL_MAPPING,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
 
 class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     """
@@ -197,20 +197,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     async def _import_history_batch(self, station_prefix: str, measurements: list[dict]):
         """Zapíše jednu dávku historických bodů do Recorderu."""
 
-        api_to_internal_mapping = {
-            "teplotavnejsi": "teplota_vnejsi",
-            "vlhkostvnejsi": "vlhkost_vnejsi",
-            "tlakrel": "tlak_relativni",
-            "srazkyintenzita": "intenzita_srazek",
-            "vitr": "vitr_rychlost",
-            "vitrnarazy": "vitr_narazy",
-            "vitrsmer": "vitr_smer",
-            "slunzareni": "slunecni_zareni",
-            "uvindex": "uv_index",
-            "teplotavnitrni": "teplota_vnitrni",
-            "vlhkostvnitrni": "vlhkost_vnitrni",
-        }
-
         missing = 0
 
         for m in measurements:
@@ -244,7 +230,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     continue
 
                 key_lower = key.lower()
-                internal_sid = api_to_internal_mapping.get(key_lower, key_lower)
+                internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
                 entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
                 if not await self._history_exists(entity_id, ts):
@@ -417,20 +403,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
 
-        api_to_internal_mapping = {
-            "teplatavnejsi": "teplota_vnejsi",
-            "vlhkostvnejsi": "vlhkost_vnejsi",
-            "tlakrel": "tlak_relativni",
-            "srazkyintenzita": "intenzita_srazek",
-            "vitr": "vitr_rychlost",
-            "vitrnarazy": "vitr_narazy",
-            "vitrsmer": "vitr_smer",
-            "slunzareni": "slunecni_zareni",
-            "uvindex": "uv_index",
-            "teplotavnitrni": "teplota_vnitrni",
-            "vlhkostvnitrni": "vlhkost_vnitrni",
-        }
-
         def _load_history(target_entity_id: str):
             with rec.get_session() as session:
                 rows = session.execute(
@@ -446,7 +418,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if sid not in SENSOR_DEFINITIONS:
                 continue
 
-            internal_sid = api_to_internal_mapping.get(sid.lower(), sid.lower())
+            internal_sid = API_TO_INTERNAL_MAPPING.get(sid.lower(), sid.lower())
             entity_id = f"sensor.{station_prefix}_{internal_sid}"
             
             rows = await self.hass.async_add_executor_job(_load_history, entity_id)
@@ -627,20 +599,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if not history_payload or not isinstance(history_payload, list):
             return
 
-        api_to_internal_mapping = {
-            "teplatavnejsi": "teplota_vnejsi",
-            "vlhkostvnejsi": "vlhkost_vnejsi",
-            "tlakrel": "tlak_relativni",
-            "srazkyintenzita": "intenzita_srazek",
-            "vitr": "vitr_rychlost",
-            "vitrnarazy": "vitr_narazy",
-            "vitrsmer": "vitr_smer",
-            "slunzareni": "slunecni_zareni",
-            "uvindex": "uv_index",
-            "teplotavnitrni": "teplota_vnitrni",
-            "vlhkostvnitrni": "vlhkost_vnitrni",
-        }
-
         # Vytvoříme si dočasné kontejnery pro sběr bodů z celého JSON balíku
         extracted_data: dict[str, list[float]] = {}
 
@@ -653,7 +611,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     if math.isnan(v):
                         continue
                     key_lower = api_key.lower()
-                    internal_sid = api_to_internal_mapping.get(key_lower, key_lower)
+                    internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
                     extracted_data.setdefault(internal_sid, []).append(v)
                 except Exception:
                     continue
