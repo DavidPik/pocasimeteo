@@ -166,8 +166,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     async def _history_worker(self):
         """Background worker, který po dávkách doplňuje historii do Recorderu."""
 
-        station_prefix = self.entry.title.lower().replace(" ", "_")
-
+        # Stoprocentně spolehlivý prefix pro stanici GAR632
+        station_prefix = self.entry.title.lower().strip().replace(" ", "_")
+        
         batch_size = 60  # menší dávky
         pause = 0.1      # delší pauza mezi dávkami
 
@@ -373,13 +374,20 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as e:
                 _LOGGER.debug("Fallback intensity calculation failed: %s", e)
 
+        # OPRAVENÝ BLOK (řádky 263-268):
         if self._latest_rain_intensity > 0:
-            entity_id = (
-                f"sensor.{self.entry.title.lower().replace(' ', '_')}_intenzita_srazek"
-            )
-            ts = datetime.now().replace(tzinfo=None)
+            
+            # Stoprocentně spolehlivý prefix pro stanici GAR632
+            station_prefix = self.entry.title.lower().strip().replace(" ", "_")
+        
+            entity_id = f"sensor.{station_prefix}_intenzita_srazek"
+            
+            # Použijeme správný UTC čas pro zápis do Recorderu, aby se data netloukla!
+            from homeassistant.util import dt as dt_util
+            ts = dt_util.utcnow() # Zápis v čistém UTC čase pro Recorder
+            
             await self._insert_history_point(entity_id, self._latest_rain_intensity, ts)
-
+            
         raw["SrazkyIntenzita"] = self._latest_rain_intensity
 
         normalized = self._normalize_data(raw)
@@ -409,8 +417,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         now_utc = dt_util.utcnow()
         start_ts_utc = now_utc - timedelta(hours=self._statistics_interval)
 
-        station_prefix = self.entry.title.lower().replace(" ", "_")
-
+        # Stoprocentně spolehlivý prefix pro stanici GAR632
+        station_prefix = self.entry.title.lower().strip().replace(" ", "_")
+        
         # Mapovací slovník identický s _import_history_batch, abychom sahali pro správná entity_id
         api_to_internal_mapping = {
             "teplatavnejsi": "teplota_vnejsi",
