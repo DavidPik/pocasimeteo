@@ -226,12 +226,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if math.isnan(v):
                     continue
 
-                # ARCHITEKTURA: Získání entity_id ze společného dynamického registru koordinátoru
+                # Získání garantovaného entity_id z registru
                 entity_id = self._entity_id_map.get(api_key)
-                
-                # Pokud senzor ještě nebyl v tomto běhu HA inicializován živými daty, 
-                # historii pro něj zatím přeskočíme, abychom nezapsali data pod špatný cíl.
                 if not entity_id:
+                    continue
+
+                # KONTROLA EXISTENCE ENTITY V HA: Tvrdá pojistka, která zajistí,
+                # že do DB nezapíšeme hodnotu, pokud sensor v HA reálně neběží.
+                if self.hass.states.get(entity_id) is None:
                     continue
 
                 if not await self._history_exists(entity_id, ts):
@@ -283,8 +285,17 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self._diag_last_batch_size: int = 0
         self._diag_last_write_ts: datetime | None = None
 
-        # Mapovací registr pro API klíče a interní entity_id v HA
+        # ARCHITEKTURA: Společný dynamický registr pro mapování API klíčů na reálná entity_id v HA
         self._entity_id_map: dict[str, str] = {}
+        
+        # PRE-POPULATE REGISTRU: Okamžitě při startu provážeme pevně definované API klíče
+        # To zaručí, že background worker má mapování od první milisekundy běhu HA.
+        station_prefix = self.entry.title.lower().strip().replace(" ", "_")
+        for sid, meta in SENSOR_DEFINITIONS.items():
+            api_key = meta["api_key"]
+            key_lower = api_key.lower()
+            internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
+            self._entity_id_map[api_key] = f"sensor.{station_prefix}_{internal_sid}"
 
     # -------------------------------------------------------------------------
     # Main API update
