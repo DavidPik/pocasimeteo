@@ -195,7 +195,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Background worker pro import historie dokončil práci")
 
     async def _import_history_batch(self, station_prefix: str, measurements: list[dict]):
-        """Zapíše jednu dávku historických bodů do Recorderu se správným převodem z lokálního času."""
+        """Zapíše jednu dávku historických bodů do Recorderu za použití sdíleného registru entit."""
         missing = 0
         from homeassistant.util import dt as dt_util
 
@@ -204,21 +204,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             if not ts_raw:
                 continue
 
-            # 1. KROK: Naparsování naivního data z JSONu (např. 2026-08-28 09:10:00)
             naive_local = datetime.fromisoformat(ts_raw)
-
-            # 2. KROK: Přiřazení reálného lokálního časového pásma z nastavení HA (středoevropský čas)
             local_tz = dt_util.get_time_zone(self.hass.config.time_zone)
             localized_ts = naive_local.replace(tzinfo=local_tz)
-
-            # 3. KROK: Převod do UTC a odstranění tzinfo pro kompatibilitu s DB schématem
             ts = dt_util.as_utc(localized_ts).replace(tzinfo=None)
 
-            # DIAGNOSTIKA: timestamp posledního zápisu ukládáme pro kontrolu v lokálním čase
             self._diag_last_write_ts = naive_local
 
-            for key, value in m.items():
-                if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
+            for api_key, value in m.items():
+                if api_key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
                     continue
 
                 if value in (None, "", " ", "N/A", "--"):
@@ -232,9 +226,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if math.isnan(v):
                     continue
 
-                key_lower = key.lower()
-                internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
-                entity_id = f"sensor.{station_prefix}_{internal_sid}"
+                # ARCHITEKTURA: Získání entity_id ze společného dynamického registru koordinátoru
+                entity_id = self._entity_id_map.get(api_key)
+                
+                # Pokud senzor ještě nebyl v tomto běhu HA inicializován živými daty, 
+                # historii pro něj zatím přeskočíme, abychom nezapsali data pod špatný cíl.
+                if not entity_id:
+                    continue
 
                 if not await self._history_exists(entity_id, ts):
                     missing += 1
@@ -284,6 +282,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self._diag_missing_count: int = 0
         self._diag_last_batch_size: int = 0
         self._diag_last_write_ts: datetime | None = None
+
+        # Mapovací registr pro API klíče a interní entity_id v HA
+        self._entity_id_map: dict[str, str] = {}
 
     # -------------------------------------------------------------------------
     # Main API update
@@ -484,9 +485,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
         result: dict[str, dict] = {}
         timestamp_str = datetime.now().isoformat()
+        station_prefix = self.entry.title.lower().strip().replace(" ", "_")
 
+        # A. Staticky definované senzory z SENSOR_DEFINITIONS
         for sid, meta in SENSOR_DEFINITIONS.items():
-            api_key = meta["api_key"]
+            api_key = meta["api_key"] # Původní klíč z JSONu (např. "TeplotaVnejsi")
             value = raw.get(api_key)
 
             if value is None:
@@ -499,6 +502,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     pass
 
             opts = self._sensor_options.get(sid, DEFAULT_SENSOR_OPTIONS.get(sid, {}))
+            
+            # Bezpečné sestavení internal_sid shodně s celým zbytkem integrace
+            key_lower = api_key.lower()
+            internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
+            target_entity_id = f"sensor.{station_prefix}_{internal_sid}"
+
+            # DYNAMICKÝ ZÁPIS DO REGISTRU: Propojíme surový API klíč s reálným entity_id
+            self._entity_id_map[api_key] = target_entity_id
 
             result[sid] = {
                 "value": value,
@@ -519,16 +530,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 },
             }
 
-        # DIAGNOSTIKA – přidáme do weather entity, pokud existuje
-        if "weather" in result:
-            result["weather"]["attributes"]["history_queue_length"] = self._diag_queue_length
-            result["weather"]["attributes"]["history_worker_running"] = self._diag_worker_running
-            result["weather"]["attributes"]["history_missing_count"] = self._diag_missing_count
-            result["weather"]["attributes"]["history_last_batch_size"] = self._diag_last_batch_size
-            result["weather"]["attributes"]["history_last_write_ts"] = (
-                self._diag_last_write_ts.isoformat() if self._diag_last_write_ts else None
-            )
-
+        # B. Dynamicky objevované senzory z doplňkových čidel
         for api_key, value in raw.items():
             if api_key in (
                 "Datum",
@@ -565,6 +567,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 },
             )
 
+            target_entity_id = f"sensor.{station_prefix}_{sid}"
+            
+            # DYNAMICKÝ ZÁPIS DO REGISTRU pro dynamické senzory
+            self._entity_id_map[api_key] = target_entity_id
+
             result[sid] = {
                 "value": value,
                 "meta": {
@@ -583,6 +590,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     "timestamp": timestamp_str,
                 },
             }
+
+        # DIAGNOSTIKA – přidáme do weather entity, pokud existuje
+        if "weather" in result:
+            result["weather"]["attributes"]["history_queue_length"] = self._diag_queue_length
+            result["weather"]["attributes"]["history_worker_running"] = self._diag_worker_running
+            result["weather"]["attributes"]["history_missing_count"] = self._diag_missing_count
+            result["weather"]["attributes"]["history_last_batch_size"] = self._diag_last_batch_size
+            result["weather"]["attributes"]["history_last_write_ts"] = (
+                self._diag_last_write_ts.isoformat() if self._diag_last_write_ts else None
+            )
 
         return result
 
