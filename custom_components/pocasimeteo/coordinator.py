@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import math
+import time
 from collections import Counter
 from datetime import datetime, timedelta
 
@@ -60,6 +61,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     async def _insert_history_point(self, entity_id: str, value, ts: datetime):
         rec = get_instance(self.hass)
 
+        # ARCHITEKTURA: Sjednocení formátu textového stavu s nativním HA enginem.
+        # Vždy ukládáme jako float string zaokrouhlený na 1 desetinné místo, 
+        # čímž eliminujeme rozdíly mezi '83' a '83.0' v DB tabulce States.
+        try:
+            formatted_state = f"{float(value):.1f}"
+        except (ValueError, TypeError):
+            formatted_state = str(value)
+
         def _insert():
             with rec.get_session() as session:
                 # Metadata
@@ -86,12 +95,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
                 attributes_id = attr_row.attributes_id
 
-                # State
+                # State - ukládáme již perfektně normalizovaný řetězec
                 row = States(
                     entity_id=entity_id,
                     metadata_id=metadata_id,
                     attributes_id=attributes_id,
-                    state=str(value),
+                    state=formatted_state, # <--- OPRAVA ZDE
                     last_changed=ts,
                     last_updated=ts,
                 )
@@ -199,6 +208,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         missing = 0
         from homeassistant.util import dt as dt_util
 
+        # Pojistka: Do historie nezapisujeme nic, co se stalo v posledních 10 minutách.
+        # Tím pádem aktuální moment obslouží VÝHRADNĚ živý zápis HA a data se nepotkají.
+        live_boundary = time.time() - 600 
+
         for m in measurements:
             ts_raw = m.get("Datum")
             if not ts_raw:
@@ -207,6 +220,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             naive_local = datetime.fromisoformat(ts_raw)
             local_tz = dt_util.get_time_zone(self.hass.config.time_zone)
             localized_ts = naive_local.replace(tzinfo=local_tz)
+            
+            # Kontrola proti živé hranici
+            if localized_ts.timestamp() > live_boundary:
+                continue
+
             ts = dt_util.as_utc(localized_ts).replace(tzinfo=None)
 
             self._diag_last_write_ts = naive_local
