@@ -192,46 +192,52 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         batch_size = 60  
         pause = 0.1      
 
+        # DIAGNOSTIKA: worker běží
         self._diag_worker_running = True
 
         while self._history_queue:
             batch: list[dict] = []
-            while self._history_queue and len(batch)  live_boundary:
-                    continue
-                    
-            except Exception as time_err:
-                _LOGGER.error("Chyba při konverzi času historického bodu %s: %s", ts_raw, time_err)
-                continue
+            # OPRAVENÝ ŘÁDEK: Čistá a správná smyčka pro plnění dávky
+            while self._history_queue and len(batch) < batch_size:
+                batch.append(self._history_queue.pop(0))
 
-            self._diag_last_write_ts = naive_local
+            # DIAGNOSTIKA: velikost poslední dávky + aktuální délka fronty
+            self._diag_last_batch_size = len(batch)
+            self._diag_queue_length = len(self._history_queue)
 
-            for api_key, value in m.items():
-                if api_key not in allowed_api_keys:
-                    continue
+            await self._import_history_batch(station_prefix, batch)
 
-                if value in (None, "", " ", "N/A", "--"):
-                    continue
+            # Real-time update diagnostických atributů entity weather
+            weather_entity_id = f"weather.{station_prefix}"
+            weather_state = self.hass.states.get(weather_entity_id)
+            if weather_state:
+                updated_attrs = dict(weather_state.attributes)
+                updated_attrs["history_queue_length"] = self._diag_queue_length
+                updated_attrs["history_worker_running"] = self._diag_worker_running
+                updated_attrs["history_last_batch_size"] = self._diag_last_batch_size
+                if self._diag_last_write_ts:
+                    updated_attrs["history_last_write_ts"] = self._diag_last_write_ts.isoformat()
 
-                try:
-                    v = float(value)
-                except Exception:
-                    continue
+                self.hass.states.async_set(weather_entity_id, weather_state.state, updated_attrs)
+            
+            await asyncio.sleep(pause)
 
-                if math.isnan(v):
-                    continue
+        # DIAGNOSTIKA: Kompletní vyčištění stavu PO skončení cyklu while
+        self._diag_worker_running = False
+        self._diag_queue_length = 0
+        self._diag_last_batch_size = 0
 
-                entity_id = self._entity_id_map.get(api_key)
-                if not entity_id:
-                    continue
+        # Závěrečný finální přepis na nulové hodnoty po úspěšném dokončení práce
+        weather_entity_id = f"weather.{station_prefix}"
+        weather_state = self.hass.states.get(weather_entity_id)
+        if weather_state:
+            updated_attrs = dict(weather_state.attributes)
+            updated_attrs["history_queue_length"] = 0
+            updated_attrs["history_worker_running"] = False
+            updated_attrs["history_last_batch_size"] = 0
+            self.hass.states.async_set(weather_entity_id, weather_state.state, updated_attrs)
 
-                if self.hass.states.get(entity_id) is None:
-                    continue
-
-                if not await self._history_exists(entity_id, ts):
-                    missing += 1
-                    await self._insert_history_point(entity_id, v, ts)
-
-        self._diag_missing_count = missing
+        _LOGGER.debug("Background worker pro import historie úspěšně dokončil veškerou práci")
 
     # -------------------------------------------------------------------------
     # Coordinator initialization
