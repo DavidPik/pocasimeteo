@@ -126,13 +126,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         """Připraví historii z JSONu API do fronty pro pomalý import do databáze."""
 
         # STRUKTURÁLNÍ POJISTKA PROTI RESETU FRONTY:
-        # Pokud fronta již existuje a worker běží, nový import přeskočíme,
-        # abychom běžícímu workeru nepřepsali frontu pod rukama.
         if self._history_queue and len(self._history_queue) > 0:
             _LOGGER.debug("Worker na pozadí stále pracuje, přeskakuji plnění fronty. Zbývá: %s", len(self._history_queue))
             return
 
-        # Seřadíme historii podle času
+        # Seřadíme historii podle času od nejstarší po nejnovější
         sorted_measurements = sorted(
             measurements,
             key=lambda m: datetime.fromisoformat(m["Datum"]),
@@ -174,98 +172,31 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 "SrazkyIntenzita", 0.0
             )
 
-        # Frontu naplníme novými daty (protože byla prázdná)
+        # Frontu naplníme novými daty
         self._history_queue = list(sorted_measurements)
-
-        # DIAGNOSTIKA: aktuální délka fronty
         self._diag_queue_length = len(self._history_queue)
 
-        # Worker spouštíme okamžitě a bezpečně (nezávisle na _ha_started)
-        if self._history_task is None or self._history_task.done():
-            _LOGGER.debug("Spouštím background worker pro import historie")
-            self._history_task = self.hass.async_create_task(self._history_worker())
+        # ARCHITEKTURNÍ FILTR: Worker spustíme pouze tehdy, pokud je Home Assistant PLŇE NASTARTOVÁN.
+        # Tím zabráníme zamrznutí bootování celého systému.
+        if self._ha_started:
+            if self._history_task is None or self._history_task.done():
+                _LOGGER.debug("Spouštím background worker pro import historie")
+                self._history_task = self.hass.async_create_task(self._history_worker())
+        else:
+            _LOGGER.debug("Vynechávám spuštění workeru během startovací fáze – fronta počká na dokončení bootu HA")
 
     async def _history_worker(self):
         """Background worker, který po dávkách doplňuje historii do Recorderu."""
-
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
         
         batch_size = 60  
         pause = 0.1      
 
-        # DIAGNOSTIKA: worker běží
         self._diag_worker_running = True
 
         while self._history_queue:
             batch: list[dict] = []
-            while self._history_queue and len(batch) < batch_size:
-                batch.append(self._history_queue.pop(0))
-
-            # DIAGNOSTIKA: velikost poslední dávky + aktuální délka fronty
-            self._diag_last_batch_size = len(batch)
-            self._diag_queue_length = len(self._history_queue)
-
-            await self._import_history_batch(station_prefix, batch)
-
-            # --- ARCHITEKTURNÍ ZMĚNA: Real-time update entity weather ---
-            # Najdeme entitu weather v registru stavů HA a přikážeme jí okamžitý přepis atributů
-            weather_entity_id = f"weather.{station_prefix}"
-            weather_state = self.hass.states.get(weather_entity_id)
-            if weather_state:
-                # Vytvoříme novou sadu atributů s aktuálními čísly z paměti koordinátoru
-                updated_attrs = dict(weather_state.attributes)
-                updated_attrs["history_queue_length"] = self._diag_queue_length
-                updated_attrs["history_worker_running"] = self._diag_worker_running
-                updated_attrs["history_last_batch_size"] = self._diag_last_batch_size
-                if self._diag_last_write_ts:
-                    updated_attrs["history_last_write_ts"] = self._diag_last_write_ts.isoformat()
-
-                # Tvrdý zápis do stavového stroje HA bez vlivu na API interval
-                self.hass.states.async_set(
-                    weather_entity_id, 
-                    weather_state.state, 
-                    updated_attrs
-                )
-            
-            await asyncio.sleep(pause)
-
-        # DIAGNOSTIKA: Kompletní vyčištění stavu PO skončení cyklu while
-        self._diag_worker_running = False
-        self._diag_queue_length = 0
-        self._diag_last_batch_size = 0
-
-        _LOGGER.debug("Background worker pro import historie úspěšně dokončil veškerou práci")
-
-    async def _import_history_batch(self, station_prefix: str, measurements: list[dict]):
-        """Zapíše jednu dávku historických bodů do Recorderu s neprůstřelným zpracováním času."""
-        missing = 0
-        from homeassistant.util import dt as dt_util
-        import time
-
-        # Pojistka: Do historie nezapisujeme nic, co se stalo v posledních 10 minutách (600 vteřin)
-        live_boundary = time.time() - 600
-
-        allowed_api_keys = {meta["api_key"] for meta in SENSOR_DEFINITIONS.values()}
-        allowed_api_keys.update(["TeplotaVnejsi", "TeplotaVnitrni", "VlhkostVnejsi", "VlhkostVnitrni", "SrazkyDen", "SlunZareni", "UVindex", "Vitr", "VitrNarazy", "VitrSmer", "TlakRel"])
-
-        for m in measurements:
-            ts_raw = m.get("Datum")
-            if not ts_raw:
-                continue
-
-            try:
-                # 1. Naparsování naivního data z JSONu (např. "2026-08-28 21:40:00")
-                naive_local = datetime.fromisoformat(ts_raw)
-                
-                # 2. ARCHITEKTURNÍ OPRAVA: Explicitně lokalizujeme čas na pásmo nastavené v Home Assistentovi (místní středoevropský čas)
-                local_tz = dt_util.get_time_zone(self.hass.config.time_zone)
-                localized_dt = dt_util.as_local(naive_local.replace(tzinfo=local_tz))
-
-                # 3. Nyní bezpečně převedeme na čisté UTC pro SQL Recorder schéma
-                ts = dt_util.as_utc(localized_dt).replace(tzinfo=None)
-                
-                # Kontrola proti živé hranici (posledních 10 minut necháváme živému zápisu)
-                if localized_dt.timestamp() > live_boundary:
+            while self._history_queue and len(batch)  live_boundary:
                     continue
                     
             except Exception as time_err:
