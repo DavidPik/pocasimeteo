@@ -207,6 +207,26 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             await self._import_history_batch(station_prefix, batch)
 
+            # --- ARCHITEKTURNÍ ZMĚNA: Real-time update entity weather ---
+            # Najdeme entitu weather v registru stavů HA a přikážeme jí okamžitý přepis atributů
+            weather_entity_id = f"weather.{station_prefix}"
+            weather_state = self.hass.states.get(weather_entity_id)
+            if weather_state:
+                # Vytvoříme novou sadu atributů s aktuálními čísly z paměti koordinátoru
+                updated_attrs = dict(weather_state.attributes)
+                updated_attrs["history_queue_length"] = self._diag_queue_length
+                updated_attrs["history_worker_running"] = self._diag_worker_running
+                updated_attrs["history_last_batch_size"] = self._diag_last_batch_size
+                if self._diag_last_write_ts:
+                    updated_attrs["history_last_write_ts"] = self._diag_last_write_ts.isoformat()
+
+                # Tvrdý zápis do stavového stroje HA bez vlivu na API interval
+                self.hass.states.async_set(
+                    weather_entity_id, 
+                    weather_state.state, 
+                    updated_attrs
+                )
+            
             await asyncio.sleep(pause)
 
         # DIAGNOSTIKA: Kompletní vyčištění stavu PO skončení cyklu while
