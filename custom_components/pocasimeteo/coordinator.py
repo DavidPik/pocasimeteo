@@ -294,6 +294,19 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
             self._entity_id_map[api_key] = f"sensor.{station_prefix}_{internal_sid}"
 
+        # V __init__ koordinátoru (přibližně řádek 290) zaregistrujeme posluchač na start HA:
+        from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+
+        async def _play_delayed_history_worker(_):
+            _LOGGER.debug("Home Assistant plně dokončil start – aktivuji background worker historie")
+            self._ha_started = True
+            # Pokud ve frontě zbyla data z prvního refreshu, okamžitě spustíme worker
+            if self._history_queue and (self._history_task is None or self._history_task.done()):
+                self._history_task = self.hass.async_create_task(self._history_worker())
+
+        # Registrace listeneru na sběrnici HA
+        self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _play_delayed_history_worker)
+
     # -------------------------------------------------------------------------
     # Main API update
     # -------------------------------------------------------------------------
