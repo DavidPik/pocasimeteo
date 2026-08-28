@@ -116,6 +116,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     async def _import_history(self, measurements: list[dict]):
         """Připraví historii z JSONu API do fronty pro pomalý import do databáze."""
 
+        # Pokud fronta již existuje a obsahuje nedokončené body, 
+        # nový import přeskočíme, abychom běžícímu workeru nepřepsali práci pod rukama.
+        if self._history_queue and len(self._history_queue) > 0:
+            _LOGGER.debug("Worker na pozadí stále pracuje, přeskakuji plnění fronty. Zbývá: %s", len(self._history_queue))
+            return
+
         # Seřadíme historii podle času
         sorted_measurements = sorted(
             measurements,
@@ -199,7 +205,17 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         # DIAGNOSTIKA: worker skončil, fronta prázdná
         self._diag_worker_running = False
+        
+         # frontu přepisujeme (jen pokud byla prázdná díky pojistce nahoře)
+        self._history_queue = list(sorted_measurements)
+
+        # DIAGNOSTIKA: aktuální délka fronty
         self._diag_queue_length = len(self._history_queue)
+
+        # Worker spouštíme okamžitě
+        if self._history_task is None or self._history_task.done():
+            _LOGGER.debug("Spouštím background worker pro import historie")
+            self._history_task = self.hass.async_create_task(self._history_worker())
 
         _LOGGER.debug("Background worker pro import historie dokončil práci")
 
@@ -380,13 +396,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if "SrazkyDen" in raw:
             self.station_metadata["srazky_den"] = raw["SrazkyDen"]
 
-        # Import historie – ale ne při prvním refreshi
+        # Import historie – povolíme HNED při prvním startu
         if isinstance(history_payload, list) and len(history_payload) > 0:
             try:
-                if self._ha_started:
-                    await self._import_history(history_payload)
-                else:
-                    _LOGGER.debug("První refresh – historie se neimportuje")
+                await self._import_history(history_payload)
             except Exception as hist_err:
                 _LOGGER.warning("Import historie PočasíMeteo selhal: %s", hist_err)
 
