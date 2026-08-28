@@ -116,8 +116,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     async def _import_history(self, measurements: list[dict]):
         """Připraví historii z JSONu API do fronty pro pomalý import do databáze."""
 
-        # Pokud fronta již existuje a obsahuje nedokončené body, 
-        # nový import přeskočíme, abychom běžícímu workeru nepřepsali práci pod rukama.
+        # STRUKTURÁLNÍ POJISTKA PROTI RESETU FRONTY:
+        # Pokud fronta již existuje a worker běží, nový import přeskočíme,
+        # abychom běžícímu workeru nepřepsali frontu pod rukama.
         if self._history_queue and len(self._history_queue) > 0:
             _LOGGER.debug("Worker na pozadí stále pracuje, přeskakuji plnění fronty. Zbývá: %s", len(self._history_queue))
             return
@@ -164,28 +165,24 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 "SrazkyIntenzita", 0.0
             )
 
-        # frontu přepisujeme
+        # Frontu naplníme novými daty (protože byla prázdná)
         self._history_queue = list(sorted_measurements)
 
         # DIAGNOSTIKA: aktuální délka fronty
         self._diag_queue_length = len(self._history_queue)
 
-        # Worker se spouští jen když HA už běží
-        if self._ha_started:
-            if self._history_task is None or self._history_task.done():
-                _LOGGER.debug("Spouštím background worker pro import historie")
-                self._history_task = self.hass.async_create_task(self._history_worker())
-        else:
-            _LOGGER.debug("HA se teprve startuje – worker nebude spuštěn")
+        # Worker spouštíme okamžitě a bezpečně (nezávisle na _ha_started)
+        if self._history_task is None or self._history_task.done():
+            _LOGGER.debug("Spouštím background worker pro import historie")
+            self._history_task = self.hass.async_create_task(self._history_worker())
 
     async def _history_worker(self):
         """Background worker, který po dávkách doplňuje historii do Recorderu."""
 
-        # Stoprocentně spolehlivý prefix pro stanici GAR632
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
         
-        batch_size = 60  # menší dávky
-        pause = 0.1      # delší pauza mezi dávkami
+        batch_size = 60  
+        pause = 0.1      
 
         # DIAGNOSTIKA: worker běží
         self._diag_worker_running = True
@@ -203,21 +200,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             await asyncio.sleep(pause)
 
-        # DIAGNOSTIKA: worker skončil, fronta prázdná
+        # DIAGNOSTIKA: Kompletní vyčištění stavu PO skončení cyklu while
         self._diag_worker_running = False
-        
-         # frontu přepisujeme (jen pokud byla prázdná díky pojistce nahoře)
-        self._history_queue = list(sorted_measurements)
+        self._diag_queue_length = 0
+        self._diag_last_batch_size = 0
 
-        # DIAGNOSTIKA: aktuální délka fronty
-        self._diag_queue_length = len(self._history_queue)
-
-        # Worker spouštíme okamžitě
-        if self._history_task is None or self._history_task.done():
-            _LOGGER.debug("Spouštím background worker pro import historie")
-            self._history_task = self.hass.async_create_task(self._history_worker())
-
-        _LOGGER.debug("Background worker pro import historie dokončil práci")
+        _LOGGER.debug("Background worker pro import historie úspěšně dokončil veškerou práci")
 
     async def _import_history_batch(self, station_prefix: str, measurements: list[dict]):
         """Zapíše jednu dávku historických bodů do Recorderu s neprůstřelným zpracováním času."""
