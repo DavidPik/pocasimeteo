@@ -195,29 +195,32 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Background worker pro import historie dokončil práci")
 
     async def _import_history_batch(self, station_prefix: str, measurements: list[dict]):
-        """Zapíše jednu dávku historických bodů do Recorderu."""
-
+        """Zapíše jednu dávku historických bodů do Recorderu se správným převodem z lokálního času."""
         missing = 0
+        from homeassistant.util import dt as dt_util
 
         for m in measurements:
             ts_raw = m.get("Datum")
             if not ts_raw:
                 continue
 
-            # Předpokládáme, že API posílá lokální čas stanice. Převedeme ho na UTC, se kterým pracuje DB.
-            from homeassistant.util import dt as dt_util
-            local_ts = datetime.fromisoformat(ts_raw)
-            # Pokud v const.py nebo jinde máte definované časové pásmo stanice, použijte dt_util.as_utc()
-            ts = dt_util.as_utc(local_ts).replace(tzinfo=None)
+            # 1. KROK: Naparsování naivního data z JSONu (např. 2026-08-28 09:10:00)
+            naive_local = datetime.fromisoformat(ts_raw)
 
-            # DIAGNOSTIKA: timestamp posledního zápisu (poslední zpracovaný bod v dávce)
-            self._diag_last_write_ts = local_ts
+            # 2. KROK: Přiřazení reálného lokálního časového pásma z nastavení HA (středoevropský čas)
+            local_tz = dt_util.get_time_zone(self.hass.config.time_zone)
+            localized_ts = naive_local.replace(tzinfo=local_tz)
+
+            # 3. KROK: Převod do UTC a odstranění tzinfo pro kompatibilitu s DB schématem
+            ts = dt_util.as_utc(localized_ts).replace(tzinfo=None)
+
+            # DIAGNOSTIKA: timestamp posledního zápisu ukládáme pro kontrolu v lokálním čase
+            self._diag_last_write_ts = naive_local
 
             for key, value in m.items():
                 if key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
                     continue
 
-                # validace hodnot
                 if value in (None, "", " ", "N/A", "--"):
                     continue
 
@@ -237,7 +240,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     missing += 1
                     await self._insert_history_point(entity_id, v, ts)
 
-        # DIAGNOSTIKA: kolik bodů v této dávce bylo skutečně doplněno
         self._diag_missing_count = missing
 
     # -------------------------------------------------------------------------
@@ -360,17 +362,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as e:
                 _LOGGER.debug("Fallback intensity calculation failed: %s", e)
 
-        # OPRAVENÝ BLOK (řádky 263-268):
+        # OPRAVENÝ BLOK: Zápis intenzity srážek do Recorderu ve správném UTC formátu
         if self._latest_rain_intensity > 0:
-            
-            # Stoprocentně spolehlivý prefix pro stanici GAR632
             station_prefix = self.entry.title.lower().strip().replace(" ", "_")
-        
             entity_id = f"sensor.{station_prefix}_intenzita_srazek"
             
-            # Použijeme správný UTC čas pro zápis do Recorderu, aby se data netloukla!
             from homeassistant.util import dt as dt_util
-            ts = dt_util.utcnow() # Zápis v čistém UTC čase pro Recorder
+            # Výsledný čas musí být absolutní UTC bez tzinfo, shodně jako u importu historie
+            ts = dt_util.utcnow().replace(tzinfo=None)
             
             await self._insert_history_point(entity_id, self._latest_rain_intensity, ts)
             
