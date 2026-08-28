@@ -6,8 +6,10 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 
-from .const import DOMAIN, CONF_UPDATE_INTERVAL
+from .const import DOMAIN
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,24 +28,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Vytvoření instance koordinátoru
     coordinator = PocasimeteoDataUpdateCoordinator(hass, entry)
 
-    # Prvotní stažení dat z API s kontrolou dostupnosti
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except Exception as err:
-        raise ConfigEntryNotReady(f"Cannot connect to PočasíMeteo API: {err}") from err
-
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "coordinator": coordinator,
         "entry": entry,
     }
 
-    # Zavedení platforem weather a sensor do systému
+    # 1. KROK: Nejprve bezpečně zavedeme platformy weather a sensor do systému.
+    # Tím zajistíme, že entity v HA fyzicky existují dříve, než kdokoli začne sahat do DB.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # 2. KROK: ARCHITEKTURNÍ ZMĚNA PROTI ZAMRZNUTÍ STARTU.
+    # Integrace okamžitě uvolní startovací smyčku HA a vrátí True.
+    # První ostré stažení dat z API a spuštění background workeru historie se odloží
+    # na pozadí až do milisekundy, kdy jádro HA oznámí, že dokončilo bootování všech core služeb.
+    async def _async_start_history_worker(_):
+        _LOGGER.debug("Home Assistant je plně nastartován – spouštím první asynchronní refresh PočasíMeteo")
+        try:
+            await coordinator.async_config_entry_first_refresh()
+        except Exception as err:
+            _LOGGER.error("Prvotní asynchronní refresh selhal: %s", err)
+
+    # Zaregistrujeme jednorázový systémový listener na dokončení bootu HA
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _async_start_history_worker)
     
-    # ARCHITEKTURA HA: Registrace posluchače na změnu options.
-    # Pokud uživatel v budoucnu klikne na 'Nastavit' a změní konfiguraci,
-    # tento listener automaticky zachytí změnu a integraci bezpečně restartuje.
+    # Registrace posluchače na změnu options (Lovelace konfigurace)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     
     return True
