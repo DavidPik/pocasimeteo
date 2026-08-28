@@ -95,12 +95,21 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
                 attributes_id = attr_row.attributes_id
 
-                # State - ukládáme již perfektně normalizovaný řetězec
+                # State - ukládáme s absolutně přesnou časovou indexací pro moderní HA
+                # Objekt 'ts' přichází z workeru už jako UTC datetime bez tzinfo
+                utc_timestamp = ts.replace(tzinfo=None).timestamp()
+
                 row = States(
                     entity_id=entity_id,
                     metadata_id=metadata_id,
                     attributes_id=attributes_id,
-                    state=formatted_state, # <--- OPRAVA ZDE
+                    state=formatted_state,
+                    
+                    # Moderní floatové indexy (KLÍČOVÁ OPRAVA)
+                    last_changed_ts=utc_timestamp,
+                    last_updated_ts=utc_timestamp,
+                    
+                    # Legacy sloupce (ponecháme pro zpětnou kompatibilitu)
                     last_changed=ts,
                     last_updated=ts,
                 )
