@@ -234,18 +234,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
 
             try:
-                # 1. Bezpečné naparsování textu na naivní lokální čas
+                # 1. Naparsování naivního data z JSONu (např. "2026-08-28 21:40:00")
                 naive_local = datetime.fromisoformat(ts_raw)
                 
-                # 2. Převod lokálního času stanice přímo na UTC timestamp pomocí nativního HA parseru
-                # dt_util.parse_datetime automaticky zohlední časové pásmo systému, pokud mu text předáme správně
-                localized_dt = dt_util.parse_datetime(ts_raw)
-                if localized_dt is None:
-                    # Fallback pokud vestavěný parser selže
-                    local_tz = dt_util.get_time_zone(self.hass.config.time_zone)
-                    localized_dt = naive_local.replace(tzinfo=local_tz)
+                # 2. ARCHITEKTURNÍ OPRAVA: Explicitně lokalizujeme čas na pásmo nastavené v Home Assistentovi (místní středoevropský čas)
+                local_tz = dt_util.get_time_zone(self.hass.config.time_zone)
+                localized_dt = dt_util.as_local(naive_local.replace(tzinfo=local_tz))
 
-                # Získání čistého UTC času bez tzinfo pro zápis do SQL tabulky States
+                # 3. Nyní bezpečně převedeme na čisté UTC pro SQL Recorder schéma
                 ts = dt_util.as_utc(localized_dt).replace(tzinfo=None)
                 
                 # Kontrola proti živé hranici (posledních 10 minut necháváme živému zápisu)
