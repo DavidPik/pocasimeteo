@@ -204,33 +204,49 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Background worker pro import historie dokončil práci")
 
     async def _import_history_batch(self, station_prefix: str, measurements: list[dict]):
-        """Zapíše jednu dávku historických bodů do Recorderu za použití sdíleného registru entit."""
+        """Zapíše jednu dávku historických bodů do Recorderu s neprůstřelným zpracováním času."""
         missing = 0
         from homeassistant.util import dt as dt_util
+        import time
 
-        # Pojistka: Do historie nezapisujeme nic, co se stalo v posledních 10 minutách.
-        # Tím pádem aktuální moment obslouží VÝHRADNĚ živý zápis HA a data se nepotkají.
-        live_boundary = time.time() - 600 
+        # Pojistka: Do historie nezapisujeme nic, co se stalo v posledních 10 minutách (600 vteřin)
+        live_boundary = time.time() - 600
+
+        allowed_api_keys = {meta["api_key"] for meta in SENSOR_DEFINITIONS.values()}
+        allowed_api_keys.update(["TeplotaVnejsi", "TeplotaVnitrni", "VlhkostVnejsi", "VlhkostVnitrni", "SrazkyDen", "SlunZareni", "UVindex", "Vitr", "VitrNarazy", "VitrSmer", "TlakRel"])
 
         for m in measurements:
             ts_raw = m.get("Datum")
             if not ts_raw:
                 continue
 
-            naive_local = datetime.fromisoformat(ts_raw)
-            local_tz = dt_util.get_time_zone(self.hass.config.time_zone)
-            localized_ts = naive_local.replace(tzinfo=local_tz)
-            
-            # Kontrola proti živé hranici
-            if localized_ts.timestamp() > live_boundary:
-                continue
+            try:
+                # 1. Bezpečné naparsování textu na naivní lokální čas
+                naive_local = datetime.fromisoformat(ts_raw)
+                
+                # 2. Převod lokálního času stanice přímo na UTC timestamp pomocí nativního HA parseru
+                # dt_util.parse_datetime automaticky zohlední časové pásmo systému, pokud mu text předáme správně
+                localized_dt = dt_util.parse_datetime(ts_raw)
+                if localized_dt is None:
+                    # Fallback pokud vestavěný parser selže
+                    local_tz = dt_util.get_time_zone(self.hass.config.time_zone)
+                    localized_dt = naive_local.replace(tzinfo=local_tz)
 
-            ts = dt_util.as_utc(localized_ts).replace(tzinfo=None)
+                # Získání čistého UTC času bez tzinfo pro zápis do SQL tabulky States
+                ts = dt_util.as_utc(localized_dt).replace(tzinfo=None)
+                
+                # Kontrola proti živé hranici (posledních 10 minut necháváme živému zápisu)
+                if localized_dt.timestamp() > live_boundary:
+                    continue
+                    
+            except Exception as time_err:
+                _LOGGER.error("Chyba při konverzi času historického bodu %s: %s", ts_raw, time_err)
+                continue
 
             self._diag_last_write_ts = naive_local
 
             for api_key, value in m.items():
-                if api_key in ("Datum", "LokalitaStanice", "DoplCidlaJson"):
+                if api_key not in allowed_api_keys:
                     continue
 
                 if value in (None, "", " ", "N/A", "--"):
@@ -244,13 +260,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if math.isnan(v):
                     continue
 
-                # Získání garantovaného entity_id z registru
                 entity_id = self._entity_id_map.get(api_key)
                 if not entity_id:
                     continue
 
-                # KONTROLA EXISTENCE ENTITY V HA: Tvrdá pojistka, která zajistí,
-                # že do DB nezapíšeme hodnotu, pokud sensor v HA reálně neběží.
                 if self.hass.states.get(entity_id) is None:
                     continue
 
