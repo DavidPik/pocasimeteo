@@ -465,7 +465,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             
             # Bezpečné a rychlé volání samostatné metody přes izolovaný HA thread pool
             values = await self.hass.async_add_executor_job(
-                self._query_recorder_history, 
+                _query_recorder_history_sync,
+                self.hass, 
                 entity_id, 
                 start_timestamp
             )
