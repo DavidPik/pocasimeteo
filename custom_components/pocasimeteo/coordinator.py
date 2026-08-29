@@ -304,7 +304,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             sample_entity = f"sensor.{station_prefix}_teplota_vnejsi"
             try:
                 existing_timestamps = await self.hass.async_add_executor_job(
-                    self._query_existing_timestamps,
+                    _query_existing_timestamps_sync,
                     get_instance(self.hass).get_session,
                     sample_entity,
                     processed_timestamps
