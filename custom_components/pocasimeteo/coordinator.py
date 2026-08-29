@@ -267,8 +267,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
             try:
                 naive_local = datetime.fromisoformat(ts_raw)
-                localized_dt = naive_local.replace(tzinfo=local_tz)
-                ts_utc_naive = dt_util.as_utc(localized_dt).replace(tzinfo=None)
+                ts_utc_with_tz = dt_util.as_utc(naive_local)
+                # Ořízneme objekt do čisté naivní UTC podoby a spočítáme float timestamp pro SQL
+                ts_utc_naive = ts_utc_with_tz.replace(tzinfo=None)
                 utc_timestamp = ts_utc_naive.timestamp()
             except Exception as e:
                 _LOGGER.error("Chyba konverzi času u bodu %s: %s", ts_raw, e)
