@@ -4,19 +4,34 @@
 [![GitHub release](https://img.shields.io/github/release/davidpik/pocasimeteo.svg)](https://github.com/davidpik/pocasimeteo/releases)
 [![License](https://img.shields.io/github/license/davidpik/pocasimeteo.svg)](LICENSE)
 
-PočasíMeteo je specifická integrace pro Home Assistant (plně optimalizovaná pro hardware Home Assistant Green), která zajišťuje stahování dat v reálném čase i doplňování historie z osobních meteostanic registrovaných na portálu **PočasíMeteo.cz**.
+PočasíMeteo je vysoce optimalizovaná integrace pro Home Assistant (testováno na HA Green), která zajišťuje:
+- živé meteorologické hodnoty z osobních meteostanic registrovaných na portálu PočasíMeteo.cz,
+- automatické doplňování chybějící historie do Recorderu,
+- přesné 24h statistiky pro frontendovou kartu pocasimeteo-card,
+- dynamické objevování nových čidel,
+- pokročilou konfiguraci vzhledu grafů přes OptionsFlow.
 
-Tato integrace úzce spolupracuje s dedikovanou frontendovou kartou `pocasimeteo-card.js` a tvoří s ní ucelený meteorologický dashboard.
+Integrace je navržena jako plně samostatný backend, který poskytuje kompletní meteorologická metadata pro frontendovou kartu `pocasimeteo-card.js` a tvoří s ní ucelený meteorologický dashboard.
 
 ---
 
 ## Hlavní funkce
 
 ### ✔️ Stabilní asynchronní architektura
-Stahování dat a složité výpočty kruhových statistik probíhají v chráněném koordinátoru na pozadí, což šetří procesor a RAM paměť vašeho Home Assistenta.
+Veškeré zpracování probíhá v dedikovaném koordinátoru:
+- API dotazy jsou řízené přes DataUpdateCoordinator.
+- Výpočty probíhají v izolovaném vlákně, aby nezatěžovaly hlavní smyčku HA.
+- Statistické výpočty (min/max, kruhové statistiky větru) probíhají v jediném průchodu datasetu.
 
 ### ✔️ Automatické doplňování historie (Recorder)
-Při výpadku sítě nebo restartu Home Assistenta integrace automaticky analyzuje 5minutovou historii posílanou z API a bezpečně dopíše chybějící body do databáze (`Recorder`). Zápis je plně kompatibilní s moderním databázovým schématem HA a zabraňuje poškození integrity tabulek.
+Integrace obsahuje vlastní background worker, který:
+- analyzuje 5minutovou historii z API,
+- porovnává ji s databází Recorderu,
+- dopisuje pouze chybějící body,
+- používá moderní schéma HA (States, StatesMeta, StateAttributes),
+- provádí zápisy přes Recorder executor, aby byla zajištěna bezpečnost a rychlost.
+
+Díky tomu je databáze vždy konzistentní a grafy na kartě mají spojitou časovou osu.
 
 ### ✔️ Klouzavé 24hodinové statistiky v RAM
 Koordinátor neustále udržuje přesné 24h klouzavé okno dat, ze kterého počítá:
@@ -30,8 +45,10 @@ Přímo v uživatelském nastavení integrace (tlačítko **Nastavit**) lze spra
 - Styl grafu – plynulý/čárový vs. schodovitý (`smooth` / `stepped`)
 - Viditelnost čidla (`visible`)
 
+Dále lze v nastavení integrace řídit četnost aktualizace dat a časový interval, za který budou připravená data pro frontendovou kartu.
+
 ### ✔️ Plná podpora pro dynamická čidla
-Pokud k meteostanici připojíte dodatečné bastlené senzory (např. čidlo v bazénu, půdní vlhkoměr), integrace je za běhu detekuje a vytvoří pro ně entity v HA. Tyto entity lze následně plně konfigurovat, měnit jejich styl, barvu nebo jejich konfigurační záznam z paměti trvale smazat, pokud čidlo odpojíte.
+Pokud k meteostanici připojíte dodatečné senzory (např. čidlo v bazénu, půdní vlhkoměr), integrace je za běhu detekuje z API a vytvoří pro ně entity v HA. Tyto entity lze následně plně konfigurovat, měnit jejich styl, barvu nebo jejich konfigurační záznam z paměti trvale smazat, pokud čidlo odpojíte.
 
 ---
 
@@ -40,7 +57,7 @@ Pokud k meteostanici připojíte dodatečné bastlené senzory (např. čidlo v 
 ### 1. Přes HACS (Doporučeno)
 1. V levém menu otevřete **HACS → Integrace**
 2. V pravém horním rohu klikněte na tři tečky a zvolte **Uživatelské repozitáře** (Custom repositories)
-3. Vložte URL adresu: `https://github.com`
+3. Vložte URL adresu: `https://github.com/DavidPik/pocasimeteo`
 4. Jako Kategorii zvolte **Integrace** a klikněte na **Přidat**
 5. Vyhledejte integraci **PočasíMeteo** v HACS katalogu a stáhněte ji.
 6. **Restartujte Home Assistant.**
@@ -57,9 +74,10 @@ Pokud k meteostanici připojíte dodatečné bastlené senzory (např. čidlo v 
 1. Přejděte do **Nastavení → Zařízení a služby**
 2. Vpravo dole klikněte na **Přidat integraci**
 3. Vyhledejte **PočasíMeteo**
-4. Zadejte libovolný **Název stanice** (např. *GAR632*) a váš unikátní **API klíč** z portálu Pocasimeteo.cz.
+4. Zadejte zvolený **Název stanice** (např. *GARNI1*) a váš unikátní **API klíč** z portálu Pocasimeteo.cz.
 5. V dalším kroku průvodce se vám zobrazí tovární konfigurace senzorů, kterou potvrďte.
 
+Integrace okamžitě vytvoří weather entitu a všechny dostupné senzory.
 ---
 
 ## Struktura entit a ID
