@@ -42,6 +42,7 @@ _LOGGER = logging.getLogger(__name__)
 
 def _query_recorder_history_sync(hass_instance: HomeAssistant, target_entity_id: str, start_timestamp: float) -> list[float]:
     """Čistě synchronní I/O dotaz do Recorderu, spuštěný odděleně v thread poolu."""
+    # Získání instance Recorderu přímo z kontextu běžícího vlákna
     rec = get_instance(hass_instance)
     with rec.get_session() as session:
         rows = session.execute(
@@ -206,18 +207,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
     # ASYNCHRONNÍ WRAPPERY PRO EXECUTOR JOBY (VOLAJÍ EXTERNÍ FUNKCE)
     # -------------------------------------------------------------------------
-
-    async def _query_recorder_history(self, target_entity_id: str, start_timestamp: float) -> list[float]:
-        """Volá externí synchronní SQL dotaz přes bezpečný thread pool."""
-        return await self.hass.async_add_executor_job(
-            _query_recorder_history_sync, self.hass, target_entity_id, start_timestamp
-        )
-
-    async def _query_existing_timestamps(self, sample_entity: str, processed_timestamps: set[float]) -> set[float]:
-        """Volá externí hromadné ověření duplicit přes bezpečný thread pool."""
-        return await self.hass.async_add_executor_job(
-            _query_existing_timestamps_sync, self.hass, sample_entity, processed_timestamps
-        )
 
     async def _insert_history_point(self, entity_id: str, value, ts: datetime):
         """Asynchronní fallback pro zápis osamocených živých stavů (např. intenzita srážek)."""
