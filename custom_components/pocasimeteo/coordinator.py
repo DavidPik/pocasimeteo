@@ -101,16 +101,28 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         """Čistě synchronní I/O dotaz do Recorderu spuštěný odděleně v executor jobu."""
         rec = get_instance(self.hass)
         with rec.get_session() as session:
-            return session.execute(
+            rows = session.execute(
                 select(States.state)
                 .where(
                     States.entity_id == target_entity_id,
                     States.last_changed_ts >= start_timestamp,
                 )
             ).all()
-
+            # Převod na plochý seznam hodnot přímo v synchronním vlákně
+            values = []
+            for row in rows:
+                if not row or row[0] in (None, "", "unknown", "unavailable"):
+                    continue
+                try:
+                    v = float(row[0])
+                    if not math.isnan(v):
+                        values.append(v)
+                except (ValueError, TypeError):
+                    continue
+            return values
+            
     def _query_existing_timestamps(self, sample_entity: str, processed_timestamps: set[float]) -> set[float]:
-        """Čistě synchronní hromadné ověření existujících timestampů v DB."""
+        """Hromadně ověří existenci celé sady timestampů v DB v synchronním executoru."""
         rec = get_instance(self.hass)
         with rec.get_session() as session:
             rows = session.execute(
@@ -120,8 +132,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     States.last_changed_ts.in_(processed_timestamps)
                 )
             ).all()
-            # OPRAVA: Výslednou množinu vygenerujeme uvnitř synchronního vlákna
-            return {row[0] for row in rows if row and row[0] is not None}
+            # OPRAVA ŘÁDKU 116: Konverze na set proběhne bezpečně uvnitř executoru
+            return {float(row[0]) for row in rows if row and row[0] is not None}
 
     def _insert_history_point_sync(self, entity_id: str, formatted_state: str, ts: datetime, utc_timestamp: float):
         """Vnitřní synchronní zápis řádku do tabulky States spuštěný v thread poolu."""
@@ -316,10 +328,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _history_worker(self):
-        """Background worker, který sází chybějící historii a okamžitě synchronizuje statistiky."""
+        """Background worker, který bezpečně doplňuje historii bez blokování DB statistikami."""
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
         batch_size = 60  
-        pause = 0.1      
+        pause = 0.2  # Mírně zvyšujeme pauzu pro vyšší stabilitu při startu HA
 
         self._diag_worker_running = True
 
@@ -331,30 +343,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             self._diag_last_batch_size = len(batch)
             self._diag_queue_length = len(self._history_queue)
 
-            # Zápis aktuální dávky
-            missing = 0
-            for m in batch:
-                ts = m.get("_computed_ts_utc")
-                for api_key, value in m.items():
-                    if api_key in ("Datum", "LokalitaStanice", "DoplCidlaJson", "_computed_ts_utc"):
-                        continue
-                    entity_id = self._entity_id_map.get(api_key)
-                    if not entity_id or self.hass.states.get(entity_id) is None:
-                        continue
-                    try:
-                        v = float(value)
-                        if not math.isnan(v):
-                            missing += 1
-                            await self._insert_history_point(entity_id, v, ts)
-                    except Exception:
-                        continue
+            await self._import_history_batch(station_prefix, batch)
             
-            self._diag_missing_count = missing
-
-            # --- INTEGRACE: Okamžitý přepočet statistik po zapsání každé dávky ---
-            if self.sensors_payload:
-                await self._update_recorder_statistics(self.sensors_payload)
-
             # Real-time update diagnostických atributů entity weather na Lovelace
             weather_entity_id = f"weather.{station_prefix}"
             weather_state = self.hass.states.get(weather_entity_id)
@@ -374,7 +364,10 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self._diag_queue_length = 0
         self._diag_last_batch_size = 0
 
-        # Finální pročištění atributů po úplném skončení importu
+        # Po úplném vyprázdnění fronty na nulu vyvoláme finální přepočet dlouhodobých statistik jednorázově
+        if self.sensors_payload:
+            await self._update_recorder_statistics(self.sensors_payload)
+
         weather_entity_id = f"weather.{station_prefix}"
         weather_state = self.hass.states.get(weather_entity_id)
         if weather_state:
@@ -384,7 +377,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             updated_attrs["history_last_batch_size"] = 0
             self.hass.states.async_set(weather_entity_id, weather_state.state, updated_attrs)
 
-        _LOGGER.debug("Background worker úspěšně dokončil import chybějících mezer a synchronizoval statistiky")
+        _LOGGER.debug("Background worker úspěšně dokončil import chybějících mezer")
 
     def register_delayed_startup(self):
         """Zaregistruje systémový listener, který aktivuje worker až po úplném zavedení HA core."""
@@ -418,7 +411,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             entity_id = f"sensor.{station_prefix}_{internal_sid}"
             
             # Bezpečné a rychlé volání samostatné metody přes izolovaný HA thread pool
-            rows = await self.hass.async_add_executor_job(
+            values = await self.hass.async_add_executor_job(
                 self._query_recorder_history, 
                 entity_id, 
                 start_timestamp
