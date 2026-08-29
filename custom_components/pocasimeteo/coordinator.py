@@ -97,7 +97,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # NÍZKOÚROVŇOVÉ DATABÁZOVÉ METODY (SQL RECORDER ENGINE)
     # -------------------------------------------------------------------------
 
-    def _query_recorder_history(self, target_entity_id: str, start_timestamp: float) -> list:
+    def _query_recorder_history(self, target_entity_id: str, start_timestamp: float) -> list[float]:
         """Čistě synchronní I/O dotaz do Recorderu spuštěný odděleně v executor jobu."""
         rec = get_instance(self.hass)
         with rec.get_session() as session:
@@ -108,13 +108,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     States.last_changed_ts >= start_timestamp,
                 )
             ).all()
-            # Převod na plochý seznam hodnot přímo v synchronním vlákně
+            
+            # Bezpečný a rychlý převod ORM ntic na čisté floaty uvnitř synchronního vlákna
             values = []
             for row in rows:
-                if not row or row[0] in (None, "", "unknown", "unavailable"):
+                state_val = row[0] if isinstance(row, tuple) else row
+                if state_val in (None, "", "unknown", "unavailable"):
                     continue
                 try:
-                    v = float(row[0])
+                    v = float(state_val)
                     if not math.isnan(v):
                         values.append(v)
                 except (ValueError, TypeError):
@@ -446,18 +448,19 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
                 rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
                 
-                # Pokud Counter najde shodu, vytáhneme první prvek z první ntic [0][0].
-                # Pokud by byl seznam prázdný, použijeme jako fallback první hodnotu z pole values.
+                # most_common(1) vrací list n-tic, např. [(225.0, 14)].
+                # Pomocí [0][0] vytáhneme čistou float hodnotu úhlu (225.0).
                 if rounded:
-                    mode_deg = Counter(rounded).most_common(1)[0][0]
+                    common_modes = Counter(rounded).most_common(1)
+                    mode_deg = common_modes[0][0] if common_modes else values[0]
                 else:
-                    mode_deg = values[0]
+                    mode_deg = values[0] if values else 0.0
 
                 r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
                 var_deg = math.degrees(math.sqrt(-2.0 * math.log(r_vector))) if 0.001 < r_vector < 1.0 else 0.0
 
                 payload["attributes"]["stats_avg"] = round(avg_deg, 1)
-                payload["attributes"]["stats_mode"] = round(mode_deg, 1)
+                payload["attributes"]["stats_mode"] = round(mode_deg, 1)  # Nyní už round() získá čisté číslo!
                 payload["attributes"]["stats_var"] = round(min(var_deg, 180.0), 1)
             else:
                 payload["attributes"]["stats_min"] = min(values)
