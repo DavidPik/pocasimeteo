@@ -98,10 +98,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     def _query_recorder_history(self, target_entity_id: str, start_timestamp: float) -> list[float]:
-        """Čistě synchronní I/O dotaz do Recorderu spuštěný odděleně v executor jobu."""
+        """Čistě synchronní I/O dotaz do Recorderu, který vrací pouze surové hodnoty."""
         rec = get_instance(self.hass)
         with rec.get_session() as session:
-            rows = session.execute(
+            # Použijeme scalar_values(), abychom získali čisté textové stavy bez ORM ntic (tuples)
+            # Tím zabráníme jakýmkoliv skrytým databázovým operacím při následné iteraci.
+            raw_states = session.scalars(
                 select(States.state)
                 .where(
                     States.entity_id == target_entity_id,
@@ -109,10 +111,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 )
             ).all()
             
-            # Bezpečný a rychlý převod ORM ntic na čisté floaty uvnitř synchronního vlákna
+            # Bezpečný a rychlý převod textových stavů na čisté floaty uvnitř synchronního executoru
             values = []
-            for row in rows:
-                state_val = row[0] if isinstance(row, tuple) else row
+            for state_val in raw_states:
                 if state_val in (None, "", "unknown", "unavailable"):
                     continue
                 try:
