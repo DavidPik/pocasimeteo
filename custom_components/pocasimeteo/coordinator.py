@@ -114,7 +114,7 @@ def _insert_history_batch_sync_raw(session_factory, entity_id_map: dict[str, str
                 # Metadata (StatesMeta)
                 metadata_id = meta_cache.get(entity_id)
                 if not metadata_id:
-                    meta_row = s.execute(
+                    meta_row = session.execute(
                         select(StatesMeta).where(StatesMeta.entity_id == entity_id)
                     ).scalar_one_or_none()
 
@@ -128,7 +128,7 @@ def _insert_history_batch_sync_raw(session_factory, entity_id_map: dict[str, str
 
                 # Attributes (StateAttributes)
                 if attr_id is None:
-                    attr_row = s.execute(
+                    attr_row = session.execute(
                         select(StateAttributes).where(StateAttributes.shared_attrs == "{}")
                     ).scalar_one_or_none()
 
