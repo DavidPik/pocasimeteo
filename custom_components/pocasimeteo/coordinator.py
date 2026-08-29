@@ -417,19 +417,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 start_timestamp
             )
 
-            values: list[float] = []
-            if rows:
-                for row in rows:
-                    state_val = row if isinstance(row, tuple) else row
-                    if state_val in (None, "", "unknown", "unavailable"):
-                        continue
-                    try:
-                        v = float(state_val)
-                        if not math.isnan(v):
-                            values.append(v)
-                    except Exception:
-                        continue
-
             # JEDNOTNÁ LOGIKA STATISTIK: Pokud máme v DB méně než 20 bodů (čerstvý start),
             # použijeme jako bezpečný fallback stabilní rolling_stats z kompletního JSONu.
             if len(values) < 20: 
