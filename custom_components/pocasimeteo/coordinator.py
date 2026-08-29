@@ -40,46 +40,44 @@ _LOGGER = logging.getLogger(__name__)
 # ČISTÉ SYNCHRONNÍ DATABÁZOVÉ FUNKCE (DEFINOVANÉ MIMO TŘÍDU COORDINATORU)
 # =========================================================================
 
-def _query_recorder_history_sync(session_pool, target_entity_id: str, start_timestamp: float) -> list[float]:
+def _query_recorder_history_sync(session, target_entity_id, start_timestamp):
     """Čistě synchronní I/O dotaz do Recorderu, spuštěný odděleně v thread poolu."""
-    # Získání instance Recorderu přímo z kontextu běžícího vlákna
-    with session_pool() as session:
-        rows = session.execute(
-            select(States.state)
-            .where(
-                States.entity_id == target_entity_id,
-                States.last_changed_ts >= start_timestamp,
-            )
-        ).all()
-        
-        values = []
-        for row in rows:
-            state_val = row if isinstance(row, tuple) else row
-            if state_val in (None, "", "unknown", "unavailable"):
-                continue
-            try:
-                v = float(state_val)
-                if not math.isnan(v):
-                    values.append(v)
-            except (ValueError, TypeError):
-                continue
-        return values
+    rows = session.execute(
+        select(States.state)
+        .where(
+            States.entity_id == target_entity_id,
+            States.last_changed_ts >= start_timestamp,
+        )
+    ).all()
 
-def _query_existing_timestamps_sync(session_pool: HomeAssistant, sample_entity: str, processed_timestamps: set[float]) -> set[float]:
+    values = []
+    for (state_val,) in rows:
+        if state_val in (None, "", "unknown", "unavailable"):
+            continue
+        try:
+            v = float(state_val)
+            if not math.isnan(v):
+                values.append(v)
+        except Exception:
+            continue
+    return values
+
+def _query_existing_timestamps_sync(session, sample_entity, processed_timestamps):
     """Hromadně ověří existenci celé sady timestampů v DB v synchronním executoru."""
-    with session_pool() as session:
-        rows = session.execute(
-            select(States.last_changed_ts)
-            .where(
-                States.entity_id == sample_entity,
-                States.last_changed_ts.in_(processed_timestamps)
-            )
-        ).all()
-        return {float(row[0]) for row in rows if row and row[0] is not None}
+    rows = session.execute(
+        select(States.last_changed_ts)
+        .where(
+            States.entity_id == sample_entity,
+            States.last_changed_ts.in_(processed_timestamps)
+        )
+    ).all()
+    return {float(r[0]) for r in rows if r and r[0] is not None}
 
-def _insert_history_batch_sync_raw(session_pool, entity_id_map: dict[str, str], batch_measurements: list[dict], allowed_api_keys: set[str]):
+def _insert_history_batch_sync_raw(session, entity_id_map: dict[str, str], batch_measurements: list[dict], allowed_api_keys: set[str]):
     """Kompletní hromadný zápis celé dávky v jednom synchronním DB vlákně bez úniku do asynchronního jádra."""
-    with session_pool() as session:
+
+    # Otevřeme transakci nad session
+    with session() as s:
         meta_cache: dict[str, int] = {}
         attr_id = None
 
@@ -87,8 +85,11 @@ def _insert_history_batch_sync_raw(session_pool, entity_id_map: dict[str, str], 
             ts = m.get("_computed_ts_utc")
             if not ts:
                 continue
+
+            # Převod času na float timestamp
             utc_timestamp = ts.replace(tzinfo=None).timestamp()
 
+            # Projdeme všechny API klíče v měření
             for api_key, value in m.items():
                 if api_key in ("Datum", "LokalitaStanice", "DoplCidlaJson", "_computed_ts_utc"):
                     continue
@@ -101,6 +102,7 @@ def _insert_history_batch_sync_raw(session_pool, entity_id_map: dict[str, str], 
                 if not entity_id:
                     continue
 
+                # Konverze hodnoty na float nebo string
                 try:
                     v_float = float(value)
                     if math.isnan(v_float):
@@ -109,28 +111,35 @@ def _insert_history_batch_sync_raw(session_pool, entity_id_map: dict[str, str], 
                 except (ValueError, TypeError):
                     formatted_state = str(value)
 
+                # Metadata (StatesMeta)
                 metadata_id = meta_cache.get(entity_id)
                 if not metadata_id:
-                    meta_row = session.execute(
+                    meta_row = s.execute(
                         select(StatesMeta).where(StatesMeta.entity_id == entity_id)
                     ).scalar_one_or_none()
+
                     if not meta_row:
                         meta_row = StatesMeta(entity_id=entity_id)
-                        session.add(meta_row)
-                        session.flush()
+                        s.add(meta_row)
+                        s.flush()
+
                     metadata_id = meta_row.metadata_id
                     meta_cache[entity_id] = metadata_id
 
+                # Attributes (StateAttributes)
                 if attr_id is None:
-                    attr_row = session.execute(
+                    attr_row = s.execute(
                         select(StateAttributes).where(StateAttributes.shared_attrs == "{}")
                     ).scalar_one_or_none()
+
                     if not attr_row:
                         attr_row = StateAttributes(shared_attrs="{}")
-                        session.add(attr_row)
-                        session.flush()
+                        s.add(attr_row)
+                        s.flush()
+
                     attr_id = attr_row.attributes_id
 
+                # Vytvoření řádku States
                 row = States(
                     entity_id=entity_id,
                     metadata_id=metadata_id,
@@ -141,8 +150,10 @@ def _insert_history_batch_sync_raw(session_pool, entity_id_map: dict[str, str], 
                     last_changed=ts,
                     last_updated=ts,
                 )
-                session.add(row)
-        session.commit()
+                s.add(row)
+
+        # Commit celé dávky
+        s.commit()
 
 class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     """
@@ -210,8 +221,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         fake_batch = [{"_computed_ts_utc": ts, entity_id: value}]
         allowed = {entity_id}
         temp_map = {entity_id: entity_id}
+        session = get_instance(self.hass).get_session()
+
         await self.hass.async_add_executor_job(
-            _insert_history_batch_sync_raw, get_instance(self.hass).get_session, temp_map, fake_batch, allowed
+            _insert_history_batch_sync_raw,
+            session,
+            temp_map,
+            fake_batch,
+            allowed
         )
 
     # -------------------------------------------------------------------------
@@ -303,9 +320,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if prepared_history_points and self._ha_started:
             sample_entity = f"sensor.{station_prefix}_teplota_vnejsi"
             try:
+                session = get_instance(self.hass).get_session()
+
                 existing_timestamps = await self.hass.async_add_executor_job(
                     _query_existing_timestamps_sync,
-                    get_instance(self.hass).get_session,
+                    session,
                     sample_entity,
                     processed_timestamps
                 )
@@ -375,9 +394,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             self._diag_missing_count = missing_count
 
             # OPRAVA ŘÁDKU 146: Celou dávku pošleme do jednoho synchronního SQL vlákna naráz
+            session = get_instance(self.hass).get_session()
+
             await self.hass.async_add_executor_job(
-                self._insert_history_batch_sync_raw,
-                get_instance(self.hass).get_session,
+                _insert_history_batch_sync_raw,
+                session,
+                self._entity_id_map,
                 batch,
                 allowed_api_keys
             )
@@ -452,10 +474,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             entity_id = f"sensor.{station_prefix}_{internal_sid}"
             
             # Bezpečné a rychlé volání samostatné metody přes izolovaný HA thread pool
+            session = get_instance(self.hass).get_session()
+
             values = await self.hass.async_add_executor_job(
                 _query_recorder_history_sync,
-                get_instance(self.hass).get_session, 
-                entity_id, 
+                session,
+                entity_id,
                 start_timestamp
             )
 
