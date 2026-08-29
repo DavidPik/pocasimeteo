@@ -97,13 +97,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # NÍZKOÚROVŇOVÉ DATABÁZOVÉ METODY (SQL RECORDER ENGINE)
     # -------------------------------------------------------------------------
 
+    # -------------------------------------------------------------------------
+    # NÍZKOÚROVŇOVÉ DATABÁZOVÉ METODY (SQL RECORDER ENGINE)
+    # -------------------------------------------------------------------------
+
     def _query_recorder_history(self, target_entity_id: str, start_timestamp: float) -> list[float]:
-        """Čistě synchronní I/O dotaz do Recorderu, který vrací pouze surové hodnoty."""
+        """Čistě synchronní I/O dotaz do Recorderu, spuštěný výhradně v executoru."""
         rec = get_instance(self.hass)
         with rec.get_session() as session:
-            # Použijeme scalar_values(), abychom získali čisté textové stavy bez ORM ntic (tuples)
-            # Tím zabráníme jakýmkoliv skrytým databázovým operacím při následné iteraci.
-            raw_states = session.scalars(
+            # Surové skalární hodnoty bez vazby na ORM entity
+            raw_states = session.execute(
                 select(States.state)
                 .where(
                     States.entity_id == target_entity_id,
@@ -111,13 +114,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 )
             ).all()
             
-            # Bezpečný a rychlý převod textových stavů na čisté floaty uvnitř synchronního executoru
             values = []
-            for state_val in raw_states:
-                if state_val in (None, "", "unknown", "unavailable"):
+            for row in raw_states:
+                if not row or row[0] in (None, "", "unknown", "unavailable"):
                     continue
                 try:
-                    v = float(state_val)
+                    v = float(row[0])
                     if not math.isnan(v):
                         values.append(v)
                 except (ValueError, TypeError):
@@ -135,53 +137,87 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     States.last_changed_ts.in_(processed_timestamps)
                 )
             ).all()
-            # OPRAVA ŘÁDKU 116: Konverze na set proběhne bezpečně uvnitř executoru
             return {float(row[0]) for row in rows if row and row[0] is not None}
 
-    def _insert_history_point_sync(self, entity_id: str, formatted_state: str, ts: datetime, utc_timestamp: float):
-        """Vnitřní synchronní zápis řádku do tabulky States spuštěný v thread poolu."""
+    def _insert_history_batch_sync(self, batch_measurements: list[dict], allowed_api_keys: set[str]):
+        """
+        NEPRŮSTŘELNÁ OPRAVA ŘÁDKU 146: Kompletní hromadný zápis celé dávky (až 720 bodů)
+        v jednom synchronním DB vlákně, v jediné transakci. Nic neuniká do asynchronního jádra.
+        """
         rec = get_instance(self.hass)
         with rec.get_session() as session:
-            # Metadata
-            meta_row = session.execute(
-                select(StatesMeta).where(StatesMeta.entity_id == entity_id)
-                ).scalar_one_or_none()
+            # Pomocná mezipaměť pro metadata a atributy, abychom neduplikovali SQL dotazy v rámci cyklu
+            meta_cache: dict[str, int] = {}
+            attr_id = None
 
-            if not meta_row:
-                meta_row = StatesMeta(entity_id=entity_id)
-                session.add(meta_row)
-                session.flush()
+            for m in batch_measurements:
+                ts = m.get("_computed_ts_utc")
+                if not ts:
+                    continue
+                utc_timestamp = ts.replace(tzinfo=None).timestamp()
 
-            metadata_id = meta_row.metadata_id
+                for api_key, value in m.items():
+                    if api_key in ("Datum", "LokalitaStanice", "DoplCidlaJson", "_computed_ts_utc"):
+                        continue
+                    if api_key not in allowed_api_keys:
+                        continue
+                    if value in (None, "", " ", "N/A", "--"):
+                        continue
 
-            # Attributes
-            attr_row = session.execute(
-                select(StateAttributes).where(StateAttributes.shared_attrs == "{}")
-                ).scalar_one_or_none()
+                    entity_id = self._entity_id_map.get(api_key)
+                    if not entity_id:
+                        continue
 
-            if not attr_row:
-                attr_row = StateAttributes(shared_attrs="{}")
-                session.add(attr_row)
-                session.flush()
+                    try:
+                        v_float = float(value)
+                        if math.isnan(v_float):
+                            continue
+                        formatted_state = f"{v_float:.1f}"
+                    except (ValueError, TypeError):
+                        formatted_state = str(value)
 
-            attributes_id = attr_row.attributes_id
+                    # Vyhledání nebo vytvoření metadata_id z cache / DB
+                    metadata_id = meta_cache.get(entity_id)
+                    if not metadata_id:
+                        meta_row = session.execute(
+                            select(StatesMeta).where(StatesMeta.entity_id == entity_id)
+                        ).scalar_one_or_none()
+                        if not meta_row:
+                            meta_row = StatesMeta(entity_id=entity_id)
+                            session.add(meta_row)
+                            session.flush()
+                        metadata_id = meta_row.metadata_id
+                        meta_cache[entity_id] = metadata_id
 
-            # State - moderní float indexy + legacy sloupce pro zpětnou kompatibilitu
-            row = States(
-                entity_id=entity_id,
-                metadata_id=metadata_id,
-                attributes_id=attributes_id,
-                state=formatted_state,
-                last_changed_ts=utc_timestamp,
-                last_updated_ts=utc_timestamp,
-                last_changed=ts,
-                last_updated=ts,
-            )
-            session.add(row)
+                    # Jednorázové vyhledání sdílených atributů
+                    if attr_id is None:
+                        attr_row = session.execute(
+                            select(StateAttributes).where(StateAttributes.shared_attrs == "{}")
+                        ).scalar_one_or_none()
+                        if not attr_row:
+                            attr_row = StateAttributes(shared_attrs="{}")
+                            session.add(attr_row)
+                            session.flush()
+                        attr_id = attr_row.attributes_id
+
+                    # Vložení historického řádku
+                    row = States(
+                        entity_id=entity_id,
+                        metadata_id=metadata_id,
+                        attributes_id=attr_id,
+                        state=formatted_state,
+                        last_changed_ts=utc_timestamp,
+                        last_updated_ts=utc_timestamp,
+                        last_changed=ts,
+                        last_updated=ts,
+                    )
+                    session.add(row)
+            
+            # Commit celé transakce naráz
             session.commit()
 
     async def _insert_history_point(self, entity_id: str, value, ts: datetime):
-        """Asynchronní wrapper, který sjednotí textový stav a bezpečně deleguje I/O do thread poolu."""
+        """Asynchronní fallback pro zápis osamocených živých stavů (např. intenzita srážek)."""
         try:
             formatted_state = f"{float(value):.1f}"
         except (ValueError, TypeError):
@@ -189,14 +225,33 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         utc_timestamp = ts.replace(tzinfo=None).timestamp()
 
-        # Obalení kompletního zápisu včetně sub-dotazů do executoru
-        await self.hass.async_add_executor_job(
-            self._insert_history_point_sync,
-            entity_id,
-            formatted_state,
-            ts,
-            utc_timestamp
-        )
+        def _single_insert():
+            rec = get_instance(self.hass)
+            with rec.get_session() as session:
+                meta_row = session.execute(select(StatesMeta).where(StatesMeta.entity_id == entity_id)).scalar_one_or_none()
+                if not meta_row:
+                    meta_row = StatesMeta(entity_id=entity_id)
+                    session.add(meta_row)
+                    session.flush()
+                attr_row = session.execute(select(StateAttributes).where(StateAttributes.shared_attrs == "{}")).scalar_one_or_none()
+                if not attr_row:
+                    attr_row = StateAttributes(shared_attrs="{}")
+                    session.add(attr_row)
+                    session.flush()
+                row = States(
+                    entity_id=entity_id,
+                    metadata_id=meta_row.metadata_id,
+                    attributes_id=attr_row.attributes_id,
+                    state=formatted_state,
+                    last_changed_ts=utc_timestamp,
+                    last_updated_ts=utc_timestamp,
+                    last_changed=ts,
+                    last_updated=ts,
+                )
+                session.add(row)
+                session.commit()
+
+        await self.hass.async_add_executor_job(_single_insert)
 
     # -------------------------------------------------------------------------
     # UNIFIKOVANÉ ZPRACOVÁNÍ DATASETU (LOGIKA V JEDNOM PRŮCHODU)
@@ -331,7 +386,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _history_worker(self):
-        """Background worker, který po dávkách doplňuje historii do Recorderu."""
+        """Background worker, který bezpečně a hromadně deleguje zápis dávek do executoru."""
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
         batch_size = 60  
         pause = 0.2  
@@ -349,37 +404,26 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             self._diag_last_batch_size = len(batch)
             self._diag_queue_length = len(self._history_queue)
 
-            missing = 0
+            # Sčítání chybějících bodů pro diagnostiku
+            missing_count = 0
             for m in batch:
-                ts = m.get("_computed_ts_utc")
-                if not ts:
-                    continue
-                    
-                for api_key, value in m.items():
-                    if api_key in ("Datum", "LokalitaStanice", "DoplCidlaJson", "_computed_ts_utc"):
-                        continue
-                        
-                    if api_key not in allowed_api_keys:
-                        continue
+                for k in m.keys():
+                    if k in allowed_api_keys:
+                        missing_count += 1
+            self._diag_missing_count = missing_count
 
-                    if value in (None, "", " ", "N/A", "--"):
-                        continue
+            # OPRAVA ŘÁDKU 146: Celou dávku pošleme do jednoho synchronního SQL vlákna naráz
+            await self.hass.async_add_executor_job(
+                self._insert_history_batch_sync,
+                batch,
+                allowed_api_keys
+            )
 
-                    entity_id = self._entity_id_map.get(api_key)
-                    if not entity_id or self.hass.states.get(entity_id) is None:
-                        continue
-                        
-                    try:
-                        v = float(value)
-                        if not math.isnan(v):
-                            missing += 1
-                            await self._insert_history_point(entity_id, v, ts)
-                    except Exception:
-                        continue
-            
-            self._diag_missing_count = missing
+            # Okamžitý přepočet dlouhodobých statistik po úspěšném zápisu dávky
+            if self.sensors_payload:
+                await self._update_recorder_statistics(self.sensors_payload)
 
-            # Real-time update diagnostických atributů entity weather na Lovelace
+            # Real-time update stavu do entity weather na Lovelace
             weather_entity_id = f"weather.{station_prefix}"
             weather_state = self.hass.states.get(weather_entity_id)
             if weather_state:
@@ -398,7 +442,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self._diag_queue_length = 0
         self._diag_last_batch_size = 0
 
-        # Po úspěšném vyprázdnění fronty na nulu vyvoláme finální přepočet dlouhodobých statistik
+        # Závěrečný přepočet a vyčištění diagnostiky
         if self.sensors_payload:
             await self._update_recorder_statistics(self.sensors_payload)
 
