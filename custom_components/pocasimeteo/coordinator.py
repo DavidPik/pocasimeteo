@@ -331,12 +331,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _history_worker(self):
-        """Background worker, který bezpečně doplňuje historii bez blokování DB statistikami."""
+        """Background worker, který po dávkách doplňuje historii do Recorderu."""
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
         batch_size = 60  
-        pause = 0.2  # Mírně zvyšujeme pauzu pro vyšší stabilitu při startu HA
+        pause = 0.2  
 
         self._diag_worker_running = True
+
+        allowed_api_keys = {meta["api_key"] for meta in SENSOR_DEFINITIONS.values()}
+        allowed_api_keys.update(["TeplotaVnejsi", "TeplotaVnitrni", "VlhkostVnejsi", "VlhkostVnitrni", "SrazkyDen", "SlunZareni", "UVindex", "Vitr", "VitrNarazy", "VitrSmer", "TlakRel"])
 
         while self._history_queue:
             batch = []
@@ -346,8 +349,36 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             self._diag_last_batch_size = len(batch)
             self._diag_queue_length = len(self._history_queue)
 
-            await self._import_history_batch(station_prefix, batch)
+            missing = 0
+            for m in batch:
+                ts = m.get("_computed_ts_utc")
+                if not ts:
+                    continue
+                    
+                for api_key, value in m.items():
+                    if api_key in ("Datum", "LokalitaStanice", "DoplCidlaJson", "_computed_ts_utc"):
+                        continue
+                        
+                    if api_key not in allowed_api_keys:
+                        continue
+
+                    if value in (None, "", " ", "N/A", "--"):
+                        continue
+
+                    entity_id = self._entity_id_map.get(api_key)
+                    if not entity_id or self.hass.states.get(entity_id) is None:
+                        continue
+                        
+                    try:
+                        v = float(value)
+                        if not math.isnan(v):
+                            missing += 1
+                            await self._insert_history_point(entity_id, v, ts)
+                    except Exception:
+                        continue
             
+            self._diag_missing_count = missing
+
             # Real-time update diagnostických atributů entity weather na Lovelace
             weather_entity_id = f"weather.{station_prefix}"
             weather_state = self.hass.states.get(weather_entity_id)
@@ -367,7 +398,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self._diag_queue_length = 0
         self._diag_last_batch_size = 0
 
-        # Po úplném vyprázdnění fronty na nulu vyvoláme finální přepočet dlouhodobých statistik jednorázově
+        # Po úspěšném vyprázdnění fronty na nulu vyvoláme finální přepočet dlouhodobých statistik
         if self.sensors_payload:
             await self._update_recorder_statistics(self.sensors_payload)
 
