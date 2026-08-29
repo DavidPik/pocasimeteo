@@ -40,11 +40,10 @@ _LOGGER = logging.getLogger(__name__)
 # ČISTÉ SYNCHRONNÍ DATABÁZOVÉ FUNKCE (DEFINOVANÉ MIMO TŘÍDU COORDINATORU)
 # =========================================================================
 
-def _query_recorder_history_sync(hass_instance: HomeAssistant, target_entity_id: str, start_timestamp: float) -> list[float]:
+def _query_recorder_history_sync(session_pool, target_entity_id: str, start_timestamp: float) -> list[float]:
     """Čistě synchronní I/O dotaz do Recorderu, spuštěný odděleně v thread poolu."""
     # Získání instance Recorderu přímo z kontextu běžícího vlákna
-    rec = get_instance(hass_instance)
-    with rec.get_session() as session:
+    with session_pool() as session:
         rows = session.execute(
             select(States.state)
             .where(
@@ -66,10 +65,9 @@ def _query_recorder_history_sync(hass_instance: HomeAssistant, target_entity_id:
                 continue
         return values
 
-def _query_existing_timestamps_sync(hass_instance: HomeAssistant, sample_entity: str, processed_timestamps: set[float]) -> set[float]:
+def _query_existing_timestamps_sync(session_pool: HomeAssistant, sample_entity: str, processed_timestamps: set[float]) -> set[float]:
     """Hromadně ověří existenci celé sady timestampů v DB v synchronním executoru."""
-    rec = get_instance(hass_instance)
-    with rec.get_session() as session:
+    with session_pool() as session:
         rows = session.execute(
             select(States.last_changed_ts)
             .where(
@@ -79,10 +77,9 @@ def _query_existing_timestamps_sync(hass_instance: HomeAssistant, sample_entity:
         ).all()
         return {float(row[0]) for row in rows if row and row[0] is not None}
 
-def _insert_history_batch_sync_raw(hass_instance: HomeAssistant, entity_id_map: dict[str, str], batch_measurements: list[dict], allowed_api_keys: set[str]):
+def _insert_history_batch_sync_raw(session_pool, entity_id_map: dict[str, str], batch_measurements: list[dict], allowed_api_keys: set[str]):
     """Kompletní hromadný zápis celé dávky v jednom synchronním DB vlákně bez úniku do asynchronního jádra."""
-    rec = get_instance(hass_instance)
-    with rec.get_session() as session:
+    with session_pool() as session:
         meta_cache: dict[str, int] = {}
         attr_id = None
 
@@ -214,7 +211,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         allowed = {entity_id}
         temp_map = {entity_id: entity_id}
         await self.hass.async_add_executor_job(
-            _insert_history_batch_sync_raw, self.hass, temp_map, fake_batch, allowed
+            _insert_history_batch_sync_raw, get_instance(self.hass).get_session, temp_map, fake_batch, allowed
         )
 
     # -------------------------------------------------------------------------
@@ -308,6 +305,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             try:
                 existing_timestamps = await self.hass.async_add_executor_job(
                     self._query_existing_timestamps,
+                    get_instance(self.hass).get_session,
                     sample_entity,
                     processed_timestamps
                 )
@@ -379,6 +377,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             # OPRAVA ŘÁDKU 146: Celou dávku pošleme do jednoho synchronního SQL vlákna naráz
             await self.hass.async_add_executor_job(
                 self._insert_history_batch_sync_raw,
+                get_instance(self.hass).get_session,
                 batch,
                 allowed_api_keys
             )
@@ -455,7 +454,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             # Bezpečné a rychlé volání samostatné metody přes izolovaný HA thread pool
             values = await self.hass.async_add_executor_job(
                 _query_recorder_history_sync,
-                self.hass, 
+                get_instance(self.hass).get_session, 
                 entity_id, 
                 start_timestamp
             )
