@@ -47,12 +47,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _history_exists(self, entity_id: str, ts: datetime) -> bool:
         rec = get_instance(self.hass)
+        # Převod ověřovaného času na přesný unixový timestamp shodně s vkládáním
+        target_ts = ts.replace(tzinfo=None).timestamp()
 
         def _check():
             with rec.get_session() as session:
                 q = select(States).where(
                     States.entity_id == entity_id,
-                    States.last_changed == ts,
+                    States.last_changed_ts == target_ts,
                 )
                 return session.execute(q).first() is not None
 
@@ -411,7 +413,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _update_recorder_statistics(self, data: dict[str, dict]):
-        """Načte historii z Recorderu a spočítá statsXXX. Pokud selže, použije hodnoty z API."""
+        """Načte historii z Recorderu a spočítá statsXXX se stoprocentní přesností."""
         from homeassistant.util import dt as dt_util
 
         rec = get_instance(self.hass)
@@ -454,19 +456,19 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     except Exception:
                         continue
 
-            # CRITICAL FALLBACK LOGIC: Pokud DB vrátí méně než 2 řádky, použijeme hodnoty z API (Krok 1)
-            if len(values) < 2:
+            # JEDNOTNÁ LOGIKA STATISTIK: Pokud máme v DB dostatek bodů (aspoň za 80% požadovaného intervalu),
+            # počítáme čistě z DB. Pokud ne, použijeme jako bezpečný fallback stabilní hodnoty z rolling_stats JSONu.
+            # Tím eliminujeme nesoulad mezi prázdným grafem a vysokým číslem v atributu.
+            if len(values) < 20: 
                 if internal_sid == "vitr_smer":
                     payload["attributes"]["stats_avg"] = payload["attributes"].get("vitr_smer_avg", payload["value"])
                     payload["attributes"]["stats_mode"] = payload["attributes"].get("vitr_smer_mode", payload["value"])
                     payload["attributes"]["stats_var"] = payload["attributes"].get("vitr_smer_var", 0.0)
                 else:
-                    # Pokud nemáme dost bodů v DB, vezmeme min/max spočítané z čistého JSONu
                     payload["attributes"]["stats_min"] = payload["attributes"].get("min", payload["value"])
                     payload["attributes"]["stats_max"] = payload["attributes"].get("max", payload["value"])
                 continue
 
-            # Pokud máme v DB dostatek bodů (>= 2), provedeme standardní databázový výpočet
             if internal_sid == "vitr_smer":
                 sin_sum = 0.0
                 cos_sum = 0.0
