@@ -445,7 +445,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 avg_deg = math.degrees(math.atan2(avg_sin, avg_cos)) % 360.0
 
                 rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
-                mode_deg = Counter(rounded).most_common(1) if rounded else values
+                
+                # Pokud Counter najde shodu, vytáhneme první prvek z první ntic [0][0].
+                # Pokud by byl seznam prázdný, použijeme jako fallback první hodnotu z pole values.
+                if rounded:
+                    mode_deg = Counter(rounded).most_common(1)[0][0]
+                else:
+                    mode_deg = values[0]
 
                 r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
                 var_deg = math.degrees(math.sqrt(-2.0 * math.log(r_vector))) if 0.001 < r_vector < 1.0 else 0.0
