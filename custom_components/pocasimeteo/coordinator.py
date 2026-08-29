@@ -77,9 +77,7 @@ def _query_existing_timestamps_sync(session_factory, sample_entity, processed_ti
 
 def _insert_history_batch_sync_raw(session_factory, entity_id_map: dict[str, str], batch_measurements: list[dict], allowed_api_keys: set[str]):
     """Kompletní hromadný zápis celé dávky v jednom synchronním DB vlákně bez úniku do asynchronního jádra."""
-
-    # Otevřeme transakci nad session
-    with session_factory() as s:
+    with session_factory() as session:
         meta_cache: dict[str, int] = {}
         attr_id = None
 
@@ -122,8 +120,8 @@ def _insert_history_batch_sync_raw(session_factory, entity_id_map: dict[str, str
 
                     if not meta_row:
                         meta_row = StatesMeta(entity_id=entity_id)
-                        s.add(meta_row)
-                        s.flush()
+                        session.add(meta_row)
+                        session.flush()
 
                     metadata_id = meta_row.metadata_id
                     meta_cache[entity_id] = metadata_id
@@ -136,8 +134,8 @@ def _insert_history_batch_sync_raw(session_factory, entity_id_map: dict[str, str
 
                     if not attr_row:
                         attr_row = StateAttributes(shared_attrs="{}")
-                        s.add(attr_row)
-                        s.flush()
+                        session.add(attr_row)
+                        session.flush()
 
                     attr_id = attr_row.attributes_id
 
@@ -152,10 +150,10 @@ def _insert_history_batch_sync_raw(session_factory, entity_id_map: dict[str, str
                     last_changed=ts,
                     last_updated=ts,
                 )
-                s.add(row)
+                session.add(row)
 
         # Commit celé dávky
-        s.commit()
+        session.commit()
 
 class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     """
