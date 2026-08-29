@@ -318,29 +318,44 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if sorted_measurements:
             self._latest_rain_intensity = sorted_measurements[-1].get("SrazkyIntenzita", 0.0)
 
-        # B. JEDEN HROMADNÝ DOTAZ DO DB (ODSTRANĚNÍ DUPLICIT)
-        if prepared_history_points and self._ha_started:
-            sample_entity = f"sensor.{station_prefix}_teplota_vnejsi"
+        # B. JEDEN HROMADNÝ DOTAZ DO DB (ODSTRANĚNÍ DUPLICIT S KONTROLOU DOSTUPNOSTI RECORDERU)
+        final_queue = []
+        
+        if prepared_history_points:
+            # ARCHITEKTURA BACKENDU: Ověříme, zda je databázové jádro Recorderu v HA v tuto milisekundu
+            # již plně inicializované a schopné odpovídat na SQL dotazy.
+            recorder_instance = None
             try:
-                recorder = get_instance(self.hass)
-                session_factory = recorder.get_session
+                recorder_instance = get_instance(self.hass)
+            except Exception:
+                pass
 
-                existing_timestamps = await recorder.async_add_executor_job(
-                    _query_existing_timestamps_sync,
-                    session_factory,
-                    sample_entity,
-                    processed_timestamps
-                )
-            except Exception as db_err:
-                _LOGGER.warning("Hromadný dotaz na existenci historie selhal: %s", db_err)
-                existing_timestamps = set()
+            # Pokud je Recorder připraven, provedeme bezpečný hromadný sken duplicit
+            if recorder_instance and hasattr(recorder_instance, "get_session"):
+                sample_entity = f"sensor.{station_prefix}_teplota_vnejsi"
+                try:
+                    session_factory = recorder_instance.get_session
+                    existing_timestamps = await recorder_instance.async_add_executor_job(
+                        _query_existing_timestamps_sync,
+                        session_factory,
+                        sample_entity,
+                        processed_timestamps
+                    )
+                except Exception as db_err:
+                    _LOGGER.warning("Hromadný dotaz na existenci historie selhal (DB se zavedla, ale neodpovídá): %s", db_err)
+                    existing_timestamps = set()
 
-            final_queue = [
-                pt for pt in prepared_history_points 
-                if pt["ts_float"] not in existing_timestamps
-            ]
-        else:
-            final_queue = []
+                # Do fronty pustíme POUZE ty body, které prokazatelně v databázi ještě NEJSOU
+                final_queue = [
+                    pt for pt in prepared_history_points 
+                    if pt["ts_float"] not in existing_timestamps
+                ]
+            else:
+                # Pokud Recorder při startu HA ještě vůbec neběží, body do fronty v tuto chvíli NEDÁVÁME,
+                # abychom neriskovali duplicitní zápis. Počkáme na odložený start přes register_delayed_startup,
+                # který při dokončení bootu vyvolá čerstvý update, bezpečně profiltruje DB a zapíše data čistě.
+                _LOGGER.debug("Recorder při startu integrace ještě není inicializován. Odkládám filtraci historie na později.")
+                final_queue = []
 
         # C. SPUŠTĚNÍ WORKERU (POUZE POKUD MÁME CHYBĚJÍCÍ DATA)
         if final_queue:
@@ -626,14 +641,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 },
             }
 
-        if "weather" in result:
-            result["weather"]["attributes"]["history_queue_length"] = self._diag_queue_length
-            result["weather"]["attributes"]["history_worker_running"] = self._diag_worker_running
-            result["weather"]["attributes"]["history_missing_count"] = self._diag_missing_count
-            result["weather"]["attributes"]["history_last_batch_size"] = self._diag_last_batch_size
-            result["weather"]["attributes"]["history_last_write_ts"] = (
-                self._diag_last_write_ts.isoformat() if self._diag_last_write_ts else None
-            )
+        # Atributy zapíšeme přímo do station_metadata.
+        # Soubor weather.py je odtud automaticky načte do extra_state_attributes karty Lovelace.
+        self.station_metadata["history_queue_length"] = self._diag_queue_length
+        self.station_metadata["history_worker_running"] = self._diag_worker_running
+        self.station_metadata["history_missing_count"] = self._diag_missing_count
+        self.station_metadata["history_last_batch_size"] = self._diag_last_batch_size
+        self.station_metadata["history_last_write_ts"] = (
+            self._diag_last_write_ts.isoformat() if self._diag_last_write_ts else None
+        )
 
         return result
 
@@ -704,8 +720,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
             if len(raw) > 1:
+                # Historie obsahuje kompletní balík 24 hodin ze serveru
                 history_payload = raw[1:]
-                raw = history_payload[0]
+                
+                # Aktuální živý stav ("raw") musí být striktně POSLEDNÍ (nejnovější) 
+                # prvek z pole historie, nikoliv nejstarší index 0!
+                raw = history_payload[-1]
             else:
                 raise UpdateFailed("API response valid, but weather payload missing")
 
