@@ -110,7 +110,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             ).all()
 
     def _query_existing_timestamps(self, sample_entity: str, processed_timestamps: set[float]) -> set[float]:
-        """Hromadně ověří existenci celé sady timestampů v DB jedním rychlým dotazem."""
+        """Čistě synchronní hromadné ověření existujících timestampů v DB."""
         rec = get_instance(self.hass)
         with rec.get_session() as session:
             rows = session.execute(
@@ -120,6 +120,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     States.last_changed_ts.in_(processed_timestamps)
                 )
             ).all()
+            # OPRAVA: Výslednou množinu vygenerujeme uvnitř synchronního vlákna
             return {row[0] for row in rows if row and row[0] is not None}
 
     def _insert_history_point_sync(self, entity_id: str, formatted_state: str, ts: datetime, utc_timestamp: float):
@@ -165,7 +166,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             session.commit()
 
     async def _insert_history_point(self, entity_id: str, value, ts: datetime):
-        """Asynchronní wrapper, který sjednotí textový stav na float řetězec a spustí zápis."""
+        """Asynchronní wrapper, který sjednotí textový stav a bezpečně deleguje I/O do thread poolu."""
         try:
             formatted_state = f"{float(value):.1f}"
         except (ValueError, TypeError):
@@ -173,6 +174,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         utc_timestamp = ts.replace(tzinfo=None).timestamp()
 
+        # Obalení kompletního zápisu včetně sub-dotazů do executoru
         await self.hass.async_add_executor_job(
             self._insert_history_point_sync,
             entity_id,
