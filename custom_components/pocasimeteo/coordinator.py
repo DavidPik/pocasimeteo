@@ -424,10 +424,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 allowed_api_keys
             )
 
-            # Okamžitý přepočet dlouhodobých statistik po úspěšném zápisu dávky
-            if self.sensors_payload:
-                await self._update_recorder_statistics(self.sensors_payload)
-
             # Real-time update stavu do entity weather na Lovelace
             weather_entity_id = f"weather.{station_prefix}"
             weather_state = self.hass.states.get(weather_entity_id)
