@@ -266,13 +266,20 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
 
             try:
+                # ARCHITEKTURA BACKENDU: Načteme naivní lokální čas z JSONu meteostanice
                 naive_local = datetime.fromisoformat(ts_raw)
+                
+                # Převedeme lokální čas na UTC se zachováním visačky časového pásma (tzinfo=UTC)
                 ts_utc_with_tz = dt_util.as_utc(naive_local)
-                # Ořízneme objekt do čisté naivní UTC podoby a spočítáme float timestamp pro SQL
+                
+                # OSTRÁ OPRAVA ČASU: .timestamp() voláme na objektu SE ZÓNOU. 
+                # Tím Python přesně ví, že jde o UTC, a vrátí správný, nezkreslený Unix float timestamp.
+                utc_timestamp = ts_utc_with_tz.timestamp()
+                
+                # Do naivní podoby pro SQL pole last_changed ořízneme objekt až POTÉ
                 ts_utc_naive = ts_utc_with_tz.replace(tzinfo=None)
-                utc_timestamp = ts_utc_naive.timestamp()
             except Exception as e:
-                _LOGGER.error("Chyba konverzi času u bodu %s: %s", ts_raw, e)
+                _LOGGER.error("Chyba při konverzi času u bodu %s: %s", ts_raw, e)
                 continue
 
             # Výpočet intenzity srážek
@@ -556,7 +563,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
         result: dict[str, dict] = {}
-        timestamp_str = datetime.now().isoformat()
+        # ARCHITEKTURA: Vygenerujeme aktuální lokální čas s plnou informací o časové zóně (CEST/CET)
+        # To zaručí srozumitelný formát pro atributy senzorů i správné parsování na frontendu.
+        timestamp_str = dt_util.now().isoformat()
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
 
         # A. Staticky definované senzory z SENSOR_DEFINITIONS
