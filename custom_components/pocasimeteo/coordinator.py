@@ -443,10 +443,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self._diag_queue_length = 0
         self._diag_last_batch_size = 0
 
-        # Závěrečný přepočet a vyčištění diagnostiky
-        if self.sensors_payload:
-            await self._update_recorder_statistics(self.sensors_payload)
-
         weather_entity_id = f"weather.{station_prefix}"
         weather_state = self.hass.states.get(weather_entity_id)
         if weather_state:
