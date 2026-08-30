@@ -98,7 +98,7 @@ def _insert_history_batch_sync_raw(session_factory, entity_id_map: dict[str, str
                 if value in (None, "", " ", "N/A", "--"):
                     continue
 
-                entity_id = entity_id_map.get(api_key)
+                entity_id = entity_id_map.get(api_key.lower())
                 if not entity_id:
                     continue
 
@@ -210,7 +210,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             api_key = meta["api_key"]
             key_lower = api_key.lower()
             internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
-            self._entity_id_map[api_key] = f"sensor.{station_prefix}_{internal_sid}"
+            self._entity_id_map[api_key.lower()] = f"sensor.{station_prefix}_{internal_sid}"
 
     # -------------------------------------------------------------------------
     # ASYNCHRONNÍ WRAPPERY PRO EXECUTOR JOBY (VOLAJÍ EXTERNÍ FUNKCE)
@@ -582,7 +582,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
             target_entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
-            self._entity_id_map[api_key] = target_entity_id
+            self._entity_id_map[api_key.lower()] = target_entity_id
 
             result[sid] = {
                 "value": value,
@@ -623,7 +623,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             opts = self._sensor_options.get(sid, {"order": meta["order"], "color": meta["color"], "style": "smooth", "visible": True})
 
             target_entity_id = f"sensor.{station_prefix}_{sid}"
-            self._entity_id_map[api_key] = target_entity_id
+            self._entity_id_map[api_key.lower()] = target_entity_id
 
             result[sid] = {
                 "value": value,
