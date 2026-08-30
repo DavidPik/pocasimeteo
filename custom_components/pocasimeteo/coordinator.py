@@ -266,17 +266,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
 
             try:
-                # ARCHITEKTURA BACKENDU: Načteme naivní lokální čas z JSONu meteostanice
-                naive_local = datetime.fromisoformat(ts_raw)
+                # JEDNODUCHÁ OPRAVA CHYBY V API: Odstraníme matoucí 'Z' a necháme HA core utilitu,
+                # aby lokální čas z API sama bezpečně a správně převedla na UTC timestamp pro databázi.
+                ts_utc_with_tz = dt_util.parse_datetime(ts_raw.replace("Z", ""))
                 
-                # Převedeme lokální čas na UTC se zachováním visačky časového pásma (tzinfo=UTC)
-                ts_utc_with_tz = dt_util.as_utc(naive_local)
-                
-                # OSTRÁ OPRAVA ČASU: .timestamp() voláme na objektu SE ZÓNOU. 
-                # Tím Python přesně ví, že jde o UTC, a vrátí správný, nezkreslený Unix float timestamp.
                 utc_timestamp = ts_utc_with_tz.timestamp()
-                
-                # Do naivní podoby pro SQL pole last_changed ořízneme objekt až POTÉ
                 ts_utc_naive = ts_utc_with_tz.replace(tzinfo=None)
             except Exception as e:
                 _LOGGER.error("Chyba při konverzi času u bodu %s: %s", ts_raw, e)
