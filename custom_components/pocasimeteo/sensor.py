@@ -17,17 +17,23 @@ async def async_setup_entry(
     hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Nastavení senzorů na základě konfigurace integrace."""
-    coordinator: PocasimeteoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    data_source = hass.data[DOMAIN][entry.entry_id]
+    coordinator = data_source if not isinstance(data_source, dict) else data_source.get("coordinator")
+    
+    if coordinator is None:
+        _LOGGER.error("Koordinátor nebyl v hass.data nalezen při zavádění senzorů")
+        return
+
     entities = []
 
     # 1. KROK: Vytvoření pevných (statických) senzorů z const.py
     for sid in SENSOR_DEFINITIONS:
-        entities.append(PocasimeteoSensor(coordinator, sid))
+        entities.append(PocasimeteoSensor(coordinator, entry, sid))
 
     # 2. KROK: Vytvoření dynamicky objevených senzorů z API payloadu
     for sid in coordinator.sensors_payload:
         if sid not in SENSOR_DEFINITIONS and sid != "weather":
-            entities.append(PocasimeteoSensor(coordinator, sid))
+            entities.append(PocasimeteoSensor(coordinator, entry, sid))
 
     async_add_entities(entities)
 
@@ -35,15 +41,15 @@ async def async_setup_entry(
 class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], SensorEntity):
     """Reprezentace pasivního senzoru meteostanice PočasíMeteo."""
 
-    def __init__(self, coordinator: PocasimeteoDataUpdateCoordinator, sensor_id: str):
-        """Inicializace senzoru."""
+    def __init__(self, coordinator: PocasimeteoDataUpdateCoordinator, entry, sensor_id: str):
+        """Inicializace senzoru s přímým předáním config entry."""
         super().__init__(coordinator)
         self._sensor_id = sensor_id
-        station_prefix = coordinator.entry.title.lower().strip().replace(" ", "_")
+        station_prefix = entry.title.lower().strip().replace(" ", "_")
 
-        # Odvození interního ID entity (snake_case)
+        # Odvození interního ID entity (snake_case) přímo z entry
         internal_sid = API_TO_INTERNAL_MAPPING.get(sensor_id.lower(), sensor_id.lower())
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_{internal_sid}"
+        self._attr_unique_id = f"{entry.entry_id}_{internal_sid}"
         self.entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
         # Načtení metadat (nativní vlastnosti z const.py nebo z dynamického detektoru)
