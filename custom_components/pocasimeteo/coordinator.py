@@ -471,24 +471,34 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _update_recorder_statistics(self, data: dict[str, dict]):
-        """Načte historii z Recorderu a spočítá statsXXX se stoprocentní přesností."""
+        """
+        ARCHITEKTURA INTEGRACE: Načte historii ze SQL Recorderu a spočítá dlouhodobé statistiky.
+        Výsledky ukládá exkluzivně do extended slovníku ve self.station_metadata, čímž
+        zcela odlehčí stavům senzorů a zamezí jakýmkoliv fantomovým zápisům na disk.
+        """
         now_utc = dt_util.utcnow()
         start_ts_utc = now_utc - timedelta(hours=self._statistics_interval)
         start_timestamp = start_ts_utc.timestamp()
 
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
+        
+        # Inicializujeme pod-slovník v metadata, pokud ještě neexistuje
+        if "sensor_stats" not in self.station_metadata:
+            self.station_metadata["sensor_stats"] = {}
 
         for sid, payload in data.items():
             if sid not in SENSOR_DEFINITIONS:
-                continue
+                # Podpora pro dynamicky objevená čidla
+                internal_sid = sid
+            else:
+                internal_sid = API_TO_INTERNAL_MAPPING.get(sid.lower(), sid.lower())
 
-            internal_sid = API_TO_INTERNAL_MAPPING.get(sid.lower(), sid.lower())
             entity_id = f"sensor.{station_prefix}_{internal_sid}"
             
-            # Bezpečné a rychlé volání samostatné metody přes izolovaný HA thread pool
             recorder = get_instance(self.hass)
             session_factory = recorder.get_session
 
+            # Spustíme rychlý dotaz do DB přes izolované asynchronní vlákno thread poolu
             values = await recorder.async_add_executor_job(
                 _query_recorder_history_sync,
                 session_factory,
@@ -496,19 +506,23 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 start_timestamp
             )
 
-            # JEDNOTNÁ LOGIKA STATISTIK: Pokud máme v DB méně než 20 bodů (čerstvý start),
-            # použijeme jako bezpečný fallback stabilní rolling_stats z kompletního JSONu.
-            if len(values) < 20: 
+            # JEDNOTNÁ LOGIKA FALLBACKU: Pokud máme v DB nedostatek bodů (čerstvý start),
+            # použijeme hodnotu z aktuálního živého chodu integrace.
+            if len(values) < 10:
                 if internal_sid == "vitr_smer":
-                    payload["attributes"]["stats_avg"] = payload["attributes"].get("vitr_smer_avg", payload["value"])
-                    payload["attributes"]["stats_mode"] = payload["attributes"].get("vitr_smer_mode", payload["value"])
-                    payload["attributes"]["stats_var"] = payload["attributes"].get("vitr_smer_var", 0.0)
+                    self.station_metadata["sensor_stats"][sid] = {
+                        "stats_avg": payload["attributes"].get("vitr_smer_avg", payload["value"]),
+                        "stats_mode": payload["attributes"].get("vitr_smer_mode", payload["value"]),
+                        "stats_var": payload["attributes"].get("vitr_smer_var", 0.0)
+                    }
                 else:
-                    payload["attributes"]["stats_min"] = payload["attributes"].get("min", payload["value"])
-                    payload["attributes"]["stats_max"] = payload["attributes"].get("max", payload["value"])
+                    self.station_metadata["sensor_stats"][sid] = {
+                        "stats_min": payload["value"],
+                        "stats_max": payload["value"]
+                    }
                 continue
 
-            # Kruhová matematika pro směr větru z DB
+            # Kruhová matematika pro směr větru zapsaná přímo do weather struktur
             if internal_sid == "vitr_smer":
                 sin_sum = 0.0
                 cos_sum = 0.0
@@ -522,11 +536,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 avg_cos = cos_sum / count
 
                 avg_deg = math.degrees(math.atan2(avg_sin, avg_cos)) % 360.0
-
                 rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
                 
-                # most_common(1) vrací list n-tic, např. [(225.0, 14)].
-                # Pomocí [0][0] vytáhneme čistou float hodnotu úhlu (225.0).
                 if rounded:
                     common_modes = Counter(rounded).most_common(1)
                     mode_deg = common_modes[0][0] if common_modes else values[0]
@@ -536,12 +547,17 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
                 var_deg = math.degrees(math.sqrt(-2.0 * math.log(r_vector))) if 0.001 < r_vector < 1.0 else 0.0
 
-                payload["attributes"]["stats_avg"] = round(avg_deg, 1)
-                payload["attributes"]["stats_mode"] = round(mode_deg, 1)  # Nyní už round() získá čisté číslo!
-                payload["attributes"]["stats_var"] = round(min(var_deg, 180.0), 1)
+                self.station_metadata["sensor_stats"][sid] = {
+                    "stats_avg": round(avg_deg, 1),
+                    "stats_mode": round(mode_deg, 1),
+                    "stats_var": round(min(var_deg, 180.0), 1)
+                }
             else:
-                payload["attributes"]["stats_min"] = min(values)
-                payload["attributes"]["stats_max"] = max(values)
+                # Pro standardní lineární senzory (teploty, vlhkosti, srážky atd.)
+                self.station_metadata["sensor_stats"][sid] = {
+                    "stats_min": round(min(values), 1),
+                    "stats_max": round(max(values), 1)
+                }
 
     # -------------------------------------------------------------------------
     # TRANSFORMAČNÍ A NORMALIZAČNÍ METODY PRO STRUKTURY HA
@@ -552,53 +568,89 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         timestamp_str = dt_util.now().isoformat()
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
 
-        # A. Statické čidla
+        # A. Staticky definované senzory z SENSOR_DEFINITIONS
         for sid, meta in SENSOR_DEFINITIONS.items():
             api_key = meta["api_key"]
             value = raw.get(api_key)
+
             if value is None:
                 continue
 
-            try:
-                value = float(value) if "." in str(value) else int(value)
-            except ValueError:
-                pass
+            if isinstance(value, str):
+                try:
+                    value = float(value) if "." in value else int(value)
+                except ValueError:
+                    pass
 
-            target_entity_id = f"sensor.{station_prefix}_{API_TO_INTERNAL_MAPPING.get(api_key.lower(), api_key.lower())}"
+            opts = self._sensor_options.get(sid, DEFAULT_SENSOR_OPTIONS.get(sid, {}))
+            key_lower = api_key.lower()
+            internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
+            target_entity_id = f"sensor.{station_prefix}_{internal_sid}"
+
             self._entity_id_map[api_key.lower()] = target_entity_id
 
-            # OČIŠTĚNÍ: Senzor v HA drží pouze stav a čistý timestamp, žádné barvy ani statistiky!
+            # SENZOR DRŽÍ POUZE STAV A ČISTÝ TIMESTAMP (ŽÁDNÁ MINIMA/MAXIMA)
             result[sid] = {
                 "value": value,
+                "meta": {
+                    "name": meta["name"],
+                    "unit": meta["unit"],
+                    "icon": meta.get("icon"),
+                    "device_class": meta.get("device_class"),
+                    "state_class": meta.get("state_class"),
+                    "type": meta["type"],
+                    "order": opts.get("order", meta["order"]),
+                    "color": opts.get("color", meta["color"]),
+                    "style": opts.get("style", "smooth"),
+                    "visible": opts.get("visible", True),
+                },
                 "attributes": {
                     "timestamp": timestamp_str,
                 },
             }
 
-        # B. Dynamické čidla
+        # B. Dynamicky objevované senzory z doplňkových čidel
         for api_key, value in raw.items():
             if api_key in ("Datum", "SrazkyDen", "LokalitaStanice", "DoplCidlaJson", "Historie", "Webkamera", "_computed_ts_utc"):
                 continue
-            if any(m["api_key"] == api_key for m in SENSOR_DEFINITIONS.values()):
+
+            already_mapped = any(m["api_key"] == api_key for m in SENSOR_DEFINITIONS.values())
+            if already_mapped:
                 continue
 
-            try:
-                value = float(value) if "." in str(value) else int(value)
-            except ValueError:
-                pass
+            if isinstance(value, str):
+                try:
+                    value = float(value) if "." in value else int(value)
+                except ValueError:
+                    pass
 
+            meta = get_dynamic_sensor_meta(api_key)
             sid = api_key.lower()
+            opts = self._sensor_options.get(sid, {"order": meta["order"], "color": meta["color"], "style": "smooth", "visible": True})
+
             target_entity_id = f"sensor.{station_prefix}_{sid}"
             self._entity_id_map[api_key.lower()] = target_entity_id
 
             result[sid] = {
                 "value": value,
+                "meta": {
+                    "name": meta["name"],
+                    "unit": meta["unit"],
+                    "icon": meta.get("icon"),
+                    "device_class": meta.get("device_class"),
+                    "state_class": meta.get("state_class"),
+                    "type": meta["type"],
+                    "order": opts["order"],
+                    "color": opts["color"],
+                    "style": opts["style"],
+                    "visible": opts["visible"],
+                },
                 "attributes": {
                     "timestamp": timestamp_str,
                 },
             }
 
-        # CENTRÁLNÍ PUBLIKACE DIAGNOSTIKY DO WEATHER METADAT
+        # CENTRÁLNÍ PUBLIKACE DIAGNOSTIKY DO GLOBÁLNÍCH METADAT WEATHER
         self.station_metadata["history_queue_length"] = self._diag_queue_length
         self.station_metadata["history_worker_running"] = self._diag_worker_running
         self.station_metadata["history_missing_count"] = self._diag_missing_count
@@ -705,10 +757,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # 3. KROK: Přenesení unifikovaných rolling statistik do entit
         self._update_rolling_stats(normalized, extracted_stats)
 
-        # 4. KROK: Finální dlouhodobé statistiky z čisté databáze
-        await self._update_recorder_statistics(normalized)
-
+        # self.sensors_payload musíme naplnit PŘED spuštěním metody _update_recorder_statistics,
+        # aby měla z čeho čerpat fallback hodnoty v případě prázdné DB.
         self.sensors_payload = normalized
+
+        # 4. KROK: Spuštění výpočtu centralizovaných statistik (ukládá exkluzivně do extended atributů weather)
+        await self._update_recorder_statistics(normalized)
         
         # Při úplně prvním startu v rámci __init__.py aktivujeme odložený listener na dokončení bootu HA
         if not self._ha_started and hasattr(self, "register_delayed_startup"):
