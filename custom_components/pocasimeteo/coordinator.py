@@ -549,95 +549,56 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
     def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
         result: dict[str, dict] = {}
-        # ARCHITEKTURA: Vygenerujeme aktuální lokální čas s plnou informací o časové zóně (CEST/CET)
-        # To zaručí srozumitelný formát pro atributy senzorů i správné parsování na frontendu.
         timestamp_str = dt_util.now().isoformat()
         station_prefix = self.entry.title.lower().strip().replace(" ", "_")
 
-        # A. Staticky definované senzory z SENSOR_DEFINITIONS
+        # A. Statické čidla
         for sid, meta in SENSOR_DEFINITIONS.items():
             api_key = meta["api_key"]
             value = raw.get(api_key)
-
             if value is None:
                 continue
 
-            if isinstance(value, str):
-                try:
-                    value = float(value) if "." in value else int(value)
-                except ValueError:
-                    pass
+            try:
+                value = float(value) if "." in str(value) else int(value)
+            except ValueError:
+                pass
 
-            opts = self._sensor_options.get(sid, DEFAULT_SENSOR_OPTIONS.get(sid, {}))
-            
-            key_lower = api_key.lower()
-            internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
-            target_entity_id = f"sensor.{station_prefix}_{internal_sid}"
-
+            target_entity_id = f"sensor.{station_prefix}_{API_TO_INTERNAL_MAPPING.get(api_key.lower(), api_key.lower())}"
             self._entity_id_map[api_key.lower()] = target_entity_id
 
+            # OČIŠTĚNÍ: Senzor v HA drží pouze stav a čistý timestamp, žádné barvy ani statistiky!
             result[sid] = {
                 "value": value,
-                "meta": {
-                    "name": meta["name"],
-                    "unit": meta["unit"],
-                    "icon": meta.get("icon"),
-                    "device_class": meta.get("device_class"),
-                    "state_class": meta.get("state_class"),
-                    "type": meta["type"],
-                    "order": opts.get("order", meta["order"]),
-                    "color": opts.get("color", meta["color"]),
-                    "style": opts.get("style", "smooth"),
-                    "visible": opts.get("visible", True),
-                },
                 "attributes": {
                     "timestamp": timestamp_str,
                 },
             }
 
-        # B. Dynamicky objevované senzory z doplňkových čidel meteostanice
+        # B. Dynamické čidla
         for api_key, value in raw.items():
             if api_key in ("Datum", "SrazkyDen", "LokalitaStanice", "DoplCidlaJson", "Historie", "Webkamera", "_computed_ts_utc"):
                 continue
-
-            already_mapped = any(m["api_key"] == api_key for m in SENSOR_DEFINITIONS.values())
-            if already_mapped:
+            if any(m["api_key"] == api_key for m in SENSOR_DEFINITIONS.values()):
                 continue
 
-            if isinstance(value, str):
-                try:
-                    value = float(value) if "." in value else int(value)
-                except ValueError:
-                    pass
+            try:
+                value = float(value) if "." in str(value) else int(value)
+            except ValueError:
+                pass
 
-            meta = get_dynamic_sensor_meta(api_key)
             sid = api_key.lower()
-            opts = self._sensor_options.get(sid, {"order": meta["order"], "color": meta["color"], "style": "smooth", "visible": True})
-
             target_entity_id = f"sensor.{station_prefix}_{sid}"
             self._entity_id_map[api_key.lower()] = target_entity_id
 
             result[sid] = {
                 "value": value,
-                "meta": {
-                    "name": meta["name"],
-                    "unit": meta["unit"],
-                    "icon": meta.get("icon"),
-                    "device_class": meta.get("device_class"),
-                    "state_class": meta.get("state_class"),
-                    "type": meta["type"],
-                    "order": opts["order"],
-                    "color": opts["color"],
-                    "style": opts["style"],
-                    "visible": opts["visible"],
-                },
                 "attributes": {
                     "timestamp": timestamp_str,
                 },
             }
 
-        # Atributy zapíšeme přímo do station_metadata.
-        # Soubor weather.py je odtud automaticky načte do extra_state_attributes karty Lovelace.
+        # CENTRÁLNÍ PUBLIKACE DIAGNOSTIKY DO WEATHER METADAT
         self.station_metadata["history_queue_length"] = self._diag_queue_length
         self.station_metadata["history_worker_running"] = self._diag_worker_running
         self.station_metadata["history_missing_count"] = self._diag_missing_count
