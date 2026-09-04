@@ -52,16 +52,19 @@ class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], Sen
         self._attr_unique_id = f"{entry.entry_id}_{internal_sid}"
         self.entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
-        # Načtení metadat (nativní vlastnosti z const.py nebo z dynamického detektoru)
-        payload = coordinator.sensors_payload.get(sensor_id, {})
-        meta = payload.get("meta", {})
+       # OSTRÁ OPRAVA: Metadata o jednotkách musíme číst ze statického const.py, 
+        # protože při startu HA je sensors_payload ještě prázdný, což způsobovalo ztrátu jednotek (None)
+        if sensor_id in SENSOR_DEFINITIONS:
+            meta = SENSOR_DEFINITIONS[sensor_id]
+        else:
+            meta = get_dynamic_sensor_meta(sensor_id)
 
         self._attr_name = meta.get("name", sensor_id)
         self._attr_native_unit_of_measurement = meta.get("unit")
         self._attr_icon = meta.get("icon")
         self._attr_device_class = meta.get("device_class")
         self._attr_state_class = meta.get("state_class")
-
+        
         # Propojení s hlavním zařízením meteostanice v HA Jádru
         self._attr_device_info = coordinator.station_metadata.get("device_info")
 
