@@ -45,11 +45,6 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         self._attr_supported_features = 0
         self._attr_device_info = coordinator.station_metadata.get("device_info")
 
-        # ARCHITEKTURA CORE HA: Tato entita poskytuje pouze lokální živá data.
-        # Předpověď počasí je deaktivována (0) pro zamezení chyb NotImplementedError ve WS.
-        self._attr_supported_features = 0
-        self._attr_device_info = coordinator.station_metadata.get("device_info")
-
     @property
     def state(self) -> str | None:
         """Vrací aktuální stav počasí převedený z weather entity."""
