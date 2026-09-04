@@ -13,25 +13,37 @@ from .coordinator import PocasimeteoDataUpdateCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_entry(
-    hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback
-) -> None:
+async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddEntitiesCallback) -> None:
     """Nastavení weather platformy na základě konfigurace."""
-    coordinator: PocasimeteoDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([PocasimeteoWeather(coordinator)])
+    # Bezpečně vytáhneme koordinátor ze slovníku nebo přímo z hass.data
+    data_source = hass.data[DOMAIN][entry.entry_id]
+    coordinator = data_source if not isinstance(data_source, dict) else data_source.get("coordinator")
+    
+    if coordinator is None:
+        _LOGGER.error("Koordinátor nebyl v hass.data nalezen při zavádění weather entity")
+        return
+
+    async_add_entities([PocasimeteoWeather(coordinator, entry)])
 
 
 class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], WeatherEntity):
     """Hlavní stavová entita počasí meteostanice PočasíMeteo."""
 
-    def __init__(self, coordinator: PocasimeteoDataUpdateCoordinator):
-        """Inicializace entity."""
+    def __init__(self, coordinator: PocasimeteoDataUpdateCoordinator, entry):
+        """Inicializace entity s přímým předáním config entry."""
         super().__init__(coordinator)
-        station_prefix = coordinator.entry.title.lower().strip().replace(" ", "_")
+        self._entry = entry
+        
+        # OSTRÁ OPRAVA: Kód stanice odvodíme přímo z konfiguračního objektu entry, nikoliv z dict koordinátoru
+        station_prefix = entry.title.lower().strip().replace(" ", "_")
 
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_weather"
+        self._attr_unique_id = f"{entry.entry_id}_weather"
         self.entity_id = f"weather.{station_prefix}"
-        self._attr_name = coordinator.entry.title
+        self._attr_name = entry.title
+
+        # ARCHITEKTURA CORE HA: Tato entita poskytuje pouze lokální živá data.
+        self._attr_supported_features = 0
+        self._attr_device_info = coordinator.station_metadata.get("device_info")
 
         # ARCHITEKTURA CORE HA: Tato entita poskytuje pouze lokální živá data.
         # Předpověď počasí je deaktivována (0) pro zamezení chyb NotImplementedError ve WS.
