@@ -202,6 +202,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         # ARCHITEKTURA: Společný dynamický registr pro mapování API klíčů na reálná entity_id v HA
         self._entity_id_map: dict[str, str] = {}
+
+        # ARCHITEKTURA: Dynamicky odvodíme základní identifikátory zařízení z konfigurační instance entry.
+        # To zaručí, že sensor.py i weather.py mají vazbu na zařízení dostupnou ihned od první nanosekundy startu.
+        self.station_metadata["device_info"] = {
+            "identifiers": {(DOMAIN, entry.entry_id)},
+            "name": entry.title,
+            "manufacturer": "PočasíMeteo",
+        }        
         
         # PRE-POPULATE REGISTRU: Okamžitě při startu provážeme pevně definované API klíče
         # To zaručí, že background worker má mapování od první milisekundy běhu HA.
@@ -723,7 +731,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             meta_payload = raw[0]
             if isinstance(meta_payload, dict):
                 self.station_metadata["station_name"] = self.entry.data.get(CONF_STATION)
-                self.station_metadata["lokalita_stanice"] = meta_payload.get("LokalitaStanice")
+
+                # Načteme lokalitu stanice přímo z JSON payloadu z API
+                lokalita = meta_payload.get("LokalitaStanice")
+                self.station_metadata["lokalita_stanice"] = lokalita
+                
+                # DYNAMICKÉ DOPLNĚNÍ MODELU: Vložíme lokalitu z API jako model zařízení (např. "Meteostanice Hostivice")
+                if lokalita and "device_info" in self.station_metadata:
+                    self.station_metadata["device_info"]["model"] = f"Meteostanice {lokalita}"
+
                 if "Webkamera" in meta_payload and isinstance(meta_payload["Webkamera"], dict):
                     self.station_metadata["webcamera_url"] = meta_payload["Webkamera"].get("UrlWebcam")
 
