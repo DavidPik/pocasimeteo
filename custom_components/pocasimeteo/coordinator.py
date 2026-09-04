@@ -432,6 +432,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 allowed_api_keys
             )
 
+            # OSTRÁ ARCHITEKTONICKÁ OPRAVA: Uložíme čas, kdy background worker zapsal dávku historie na disk
+            self._diag_last_write_ts = dt_util.now()
+
             # Real-time update stavu do entity weather na Lovelace
             weather_entity_id = f"weather.{station_prefix}"
             weather_state = self.hass.states.get(weather_entity_id)
@@ -458,7 +461,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             updated_attrs["history_queue_length"] = 0
             updated_attrs["history_worker_running"] = False
             updated_attrs["history_last_batch_size"] = 0
-            self.hass.states.async_set(weather_entity_id, weather_state.state, updated_attrs)
+             # Zapíšeme čas posledního zápisu na disk do správného diagnostického atributu
+            if self._diag_last_write_ts:
+                updated_attrs["history_last_write_ts"] = self._diag_last_write_ts.isoformat()
+                
+           self.hass.states.async_set(weather_entity_id, weather_state.state, updated_attrs)
 
         _LOGGER.debug("Background worker úspěšně dokončil import chybějících mezer")
 
