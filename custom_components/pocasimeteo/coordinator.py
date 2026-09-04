@@ -773,6 +773,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # 3. KROK: Přenesení unifikovaných rolling statistik do entit
         self._update_rolling_stats(normalized, extracted_stats)
 
+        # OSTRÁ ARCHITEKTONICKÁ OPRAVA: Atribut timestamp musí držet čas nejnovějšího měření z API JSONu.
+        # Čteme lokální čas "Datum" z nejnovějšího měření a ukládáme ho pro weather platformu.
+        if isinstance(raw, dict) and "Datum" in raw:
+            self.station_metadata["api_timestamp"] = raw["Datum"]
+        else:
+            self.station_metadata["api_timestamp"] = dt_util.now().isoformat()
+
         # self.sensors_payload musíme naplnit PŘED spuštěním metody _update_recorder_statistics,
         # aby měla z čeho čerpat fallback hodnoty v případě prázdné DB.
         self.sensors_payload = normalized
