@@ -162,78 +162,52 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
     #
 
     @property
-    def extra_state_attributes(self) -> dict:
-        """Doplňkové atributy, které standardní weather neumí předat."""
-        attrs: dict = {}
-
-        if ATTR_STATION_LOCATION in self.coordinator.station_metadata:
-            attrs[ATTR_STATION_LOCATION] = self.coordinator.station_metadata[ATTR_STATION_LOCATION]
+    def extra_state_attributes(self) -> dict[str, any] | None:
+        """Vrací rozšířené atributy pro potřeby Lovelace karty."""
+        station_prefix = self.coordinator.entry.title.lower().strip().replace(" ", "_")
         
-        attrs[ATTR_API_TIMESTAMP] = datetime.now().isoformat()
-
-        daily_rain = None
-        if "srazky_den" in self.coordinator.station_metadata:
-            daily_rain = self.coordinator.station_metadata["srazky_den"]
-        else:
-            raw = getattr(self.coordinator, "data", {})
-            if isinstance(raw, dict):
-                daily_rain = raw.get("SrazkyDen")
-
-        attrs[ATTR_DAILY_RAIN] = daily_rain if daily_rain is not None else 0
-
-        # Publikace intervalu pro statistiky (podle konfigurace integrace)
-        attrs["statistics_interval"] = self._entry.options.get(CONF_STATISTICS_INTERVAL)
-
-        # Ponecháme základní update_interval pro stabilitu (z options, ne natvrdo)
-        attrs["update_interval"] = self._entry.options.get("update_interval", 5)
-
-        station_prefix = self.entity_id.split(".")[1]
-        sensors_meta: list[dict] = []
-        
+        # 1. STRUKTURA: Statická konfigurace vzhledu a řazení grafů
+        sensors_meta = []
         for sid, meta in SENSOR_DEFINITIONS.items():
             opts = self._entry.options.get(CONF_SENSORS, {}).get(sid, {})
-            
             if not opts.get("visible", meta.get("type") == "primary" or True):
                 continue
 
-            entity_id = f"sensor.{station_prefix}_{sid}"
             sensors_meta.append({
                 "id": sid,
-                "entity_id": entity_id,
+                "entity_id": f"sensor.{station_prefix}_{API_TO_INTERNAL_MAPPING.get(meta['api_key'].lower(), meta['api_key'].lower())}",
                 "type": meta.get("type", "secondary"),
                 "order": opts.get("order", meta.get("order", 999)),
                 "visible": True,
+                "graph_color": opts.get("color", meta.get("color", "#3b82f6")),
+                "graph_style": opts.get("style", "smooth")
             })
-
+            
+        # Přidáme i případná dynamická čidla do seznamu konfigurací
         for sid, payload in self.coordinator.sensors_payload.items():
-            if any(s["id"] == sid for s in sensors_meta):
-                continue
-                
-            meta = payload.get("meta", {})
-            if not meta.get("visible", True):
-                continue
+            if sid not in SENSOR_DEFINITIONS:
+                sensors_meta.append({
+                    "id": sid,
+                    "entity_id": f"sensor.{station_prefix}_{sid}",
+                    "type": "secondary",
+                    "order": 99,
+                    "visible": True,
+                    "graph_color": "#3b82f6",
+                    "graph_style": "smooth"
+                })
 
-            entity_id = f"sensor.{station_prefix}_{sid}"
-            sensors_meta.append({
-                "id": sid,
-                "entity_id": entity_id,
-                "type": meta.get("type", "secondary"),
-                "order": meta.get("order", 999),
-                "visible": True,
-            })
-
+        # Seřadíme konfiguraci podle přání uživatele
         sensors_meta.sort(key=lambda x: x["order"])
 
-        attrs["sensors"] = sensors_meta
-
-        attrs["history_queue_length"] = self.coordinator._diag_queue_length
-        attrs["history_worker_running"] = self.coordinator._diag_worker_running
-        attrs["history_missing_count"] = self.coordinator._diag_missing_count
-        attrs["history_last_batch_size"] = self.coordinator._diag_last_batch_size
-        attrs["history_last_write_ts"] = (
-            self.coordinator._diag_last_write_ts.isoformat()
-            if self.coordinator._diag_last_write_ts
-            else None
-        )
-        
+        # Sestavení výsledného slovníku extra atributů weather entity
+        attrs = {
+            "lokalita_stanice": self.coordinator.station_metadata.get("lokalita_stanice"),
+            "webcamera_url": self.coordinator.station_metadata.get("webcamera_url"),
+            "srazky_den": self.coordinator.station_metadata.get("srazky_den", 0),
+            "timestamp": self.coordinator.station_metadata.get("history_last_write_ts"),
+            
+            # DVĚ HLAVNÍ SAMOSTATNÉ STRUKTURY PRO FRONTEND KARTU
+            "sensors": sensors_meta,
+            "sensor_stats": self.coordinator.station_metadata.get("sensor_stats", {})
+        }
         return attrs
