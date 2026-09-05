@@ -180,7 +180,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=f"{DOMAIN}_{entry.entry_id}",
-            update_interval=timedelta(minutes=update_interval_minutes),
+            update_interval=timedelta(seconds=30),
         )
 
         # Rolling historie v paměti (pro min/max a kruhové statistiky směru větru)
@@ -244,7 +244,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _async_update_data(self):
-        _LOGGER.error("PM-TRACE: _async_update_data() START")
         """
         Standardní hook DataUpdateCoordinatoru.
         Stáhne JSON z API, normalizuje ho do payloadu a připraví historii pro Recorder.
@@ -268,12 +267,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         history = data.get("Historie", [])
 
         # Normalizace aktuálního měření do payloadu (sid → value/meta/attributes)
-        _LOGGER.error("PM-TRACE: calling _normalize_data()")
         normalized = self._normalize_data(current)
-        _LOGGER.error("PM-TRACE: _normalize_data() DONE")
         self.sensors_payload = normalized
-        _LOGGER.error(f"PM-TRACE: sensors_payload keys = {list(self.sensors_payload.keys())}")
-
+ 
         # Uložení základních metadat stanice
         self.station_metadata["lokalita_stanice"] = current.get("LokalitaStanice")
         self.station_metadata["srazky_den"] = current.get("SrazkyDen", 0)
@@ -292,10 +288,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # Zpracování datasetu historie – výpočet intenzity srážek, rolling statistik
         # a příprava payload‑centrické fronty pro Recorder
         station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
-        _LOGGER.error("PM-TRACE: calling _process_and_import_dataset()")
         await self._process_and_import_dataset(history, station_prefix)
-        _LOGGER.error("PM-TRACE: _process_and_import_dataset() DONE")
 
+        # Po prvním úspěšném update přepneme interval na hodnotu z konfigurace
+        if self.update_interval.total_seconds() == 30:
+            update_interval_minutes = self.entry.options.get(
+                CONF_UPDATE_INTERVAL,
+                self.entry.data.get(CONF_UPDATE_INTERVAL, 5),
+            )
+            self.update_interval = timedelta(minutes=update_interval_minutes)
+        
         return self.sensors_payload
 
     # -------------------------------------------------------------------------
