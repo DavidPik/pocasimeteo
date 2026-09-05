@@ -152,24 +152,25 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         # Sestavení výsledného slovníku kořenových atributů weather entity
         # Sestavení výsledného slovníku kořenových atributů weather entity
         attrs = {
+            "srazky_den": self.coordinator.station_metadata.get("srazky_den", 0),
             "lokalita_stanice": self.coordinator.station_metadata.get("lokalita_stanice"),
             "webcamera_url": self.coordinator.station_metadata.get("webcamera_url"),
-            "srazky_den": self.coordinator.station_metadata.get("srazky_den", 0),
+
             "statistics_interval": self.coordinator._statistics_interval,
             "update_interval": self.coordinator.update_interval.total_seconds() // 60 if self.coordinator.update_interval else 5,
             
             # OSTRÁ OPRAVA ROZHRANÍ: Každý atribut plní svou nezávislou roli
             "timestamp": self.coordinator.station_metadata.get("api_timestamp"),
-            "history_last_write_ts": self.coordinator._diag_last_write_ts.isoformat() if self.coordinator._diag_last_write_ts else None,
             
             # Dvě integrální struktury pro Lovelace kartu
             "sensors": sensors_meta,
             "sensor_stats": stats_dict,
             
             # Interní diagnostika chodu background workeru
+            "history_missing_count": self.coordinator._diag_missing_count,
             "history_queue_length": self.coordinator._diag_queue_length,
             "history_worker_running": self.coordinator._diag_worker_running,
-            "history_missing_count": self.coordinator._diag_missing_count,
+            "history_last_write_ts": self.coordinator._diag_last_write_ts.isoformat() if self.coordinator._diag_last_write_ts else None,
             "history_last_batch_size": self.coordinator._diag_last_batch_size
         }
         return attrs
