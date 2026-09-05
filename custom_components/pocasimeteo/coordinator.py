@@ -216,7 +216,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         }
 
         # PRE-POPULATE REGISTRU: Okamžitě při startu provážeme pevně definované API klíče
-        station_prefix = self.entry.title.lower().strip().replace(" ", "_")
+        station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
         for sid, meta in SENSOR_DEFINITIONS.items():
             api_key = meta["api_key"]
             key_lower = api_key.lower()
@@ -290,7 +290,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         # Zpracování datasetu historie – výpočet intenzity srážek, rolling statistik
         # a příprava payload‑centrické fronty pro Recorder
-        await self._process_and_import_dataset(history, station_prefix=station_name.lower().strip().replace(" ", "_"))
+        station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
+        await self._process_and_import_dataset(history, station_prefix)
 
         return self.sensors_payload
 
@@ -547,7 +548,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
     async def _history_worker(self):
         """Background worker, který bezpečně a hromadně deleguje zápis dávek do executoru."""
-        station_prefix = self.entry.title.lower().strip().replace(" ", "_")
+        station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
         batch_size = 60
         pause = 0.2
 
@@ -615,7 +616,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if self.sensors_payload:
             await self._update_recorder_statistics(self.sensors_payload)
 
-        station_prefix = self.entry.title.lower().strip().replace(" ", "_")
+        station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
         weather_entity_id = f"weather.{station_prefix}"
         weather_state = self.hass.states.get(weather_entity_id)
         if weather_state:
@@ -659,7 +660,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         start_ts_utc = now_utc - timedelta(hours=self._statistics_interval)
         start_timestamp = start_ts_utc.timestamp()
 
-        station_prefix = self.entry.title.lower().strip().replace(" ", "_")
+        station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
 
         if "sensor_stats" not in self.station_metadata:
             self.station_metadata["sensor_stats"] = {}
@@ -746,7 +747,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         """
         result: dict[str, dict] = {}
         timestamp_str = dt_util.now().isoformat()
-        station_prefix = self.entry.title.lower().strip().replace(" ", "_")
+        station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
 
         # A. Staticky definované senzory z SENSOR_DEFINITIONS
         for sid, meta in SENSOR_DEFINITIONS.items():
