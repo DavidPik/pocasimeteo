@@ -260,6 +260,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if resp.status != 200:
                     raise UpdateFailed(f"API returned HTTP {resp.status}")
                 data = await resp.json()
+                _LOGGER.error(f"PM-TRACE: RAW API RESPONSE: {data}")
         except Exception as err:
             _LOGGER.error("PM-TRACE: API EXCEPTION: %r", err, exc_info=True)
             raise UpdateFailed(f"Cannot fetch PočasíMeteo API: {err}") from err
