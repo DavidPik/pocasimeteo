@@ -252,11 +252,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         session = aiohttp_client.async_get_clientsession(self.hass)
 
         api_key = self.entry.data.get(CONF_API_KEY)
-        station_name = self.entry.data.get(CONF_STATION)
-
         params = {
-            "apiKey": api_key,
-            "station": station_name,
+            "KlicApi": api_key,
         }
 
         try:
