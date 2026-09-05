@@ -412,7 +412,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             self._diag_last_batch_size = len(batch)
             self._diag_queue_length = len(self._history_queue)
 
-            # Sčítání chybějících bodů pro diagnostiku
+            # Sčítání chvějících bodů pro diagnostiku
             missing_count = 0
             for m in batch:
                 for k in m.keys():
@@ -420,7 +420,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                         missing_count += 1
             self._diag_missing_count = missing_count
 
-            # OPRAVA ŘÁDKU 146: Celou dávku pošleme do jednoho synchronního SQL vlákna naráz
+            # Celou dávku pošleme do jednoho synchronního SQL vlákna naráz
             recorder = get_instance(self.hass)
             session_factory = recorder.get_session
 
@@ -432,7 +432,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 allowed_api_keys
             )
 
-            # OSTRÁ ARCHITEKTONICKÁ OPRAVA: Uložíme čas, kdy background worker zapsal dávku historie na disk
+            # OSTRÁ OPRAVA ODSAZENÍ: Uložíme čas zápisu do DB pod přesnými 12 mezerami
             self._diag_last_write_ts = dt_util.now()
 
             # Real-time update stavu do entity weather na Lovelace
@@ -450,6 +450,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             
             await asyncio.sleep(pause)
 
+        # --- KONEC CYKLU ---
         self._diag_worker_running = False
         self._diag_queue_length = 0
         self._diag_last_batch_size = 0
@@ -461,11 +462,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             updated_attrs["history_queue_length"] = 0
             updated_attrs["history_worker_running"] = False
             updated_attrs["history_last_batch_size"] = 0
-             # Zapíšeme čas posledního zápisu na disk do správného diagnostického atributu
+            
+            # Zapíšeme čas posledního zápisu na disk do správného diagnostického atributu
             if self._diag_last_write_ts:
                 updated_attrs["history_last_write_ts"] = self._diag_last_write_ts.isoformat()
                 
-           self.hass.states.async_set(weather_entity_id, weather_state.state, updated_attrs)
+            self.hass.states.async_set(weather_entity_id, weather_state.state, updated_attrs)
 
         _LOGGER.debug("Background worker úspěšně dokončil import chybějících mezer")
 
