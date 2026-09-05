@@ -666,11 +666,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             self.station_metadata["sensor_stats"] = {}
 
         for sid, payload in data.items():
-            if sid not in SENSOR_DEFINITIONS:
-                internal_sid = sid
-            else:
-                internal_sid = API_TO_INTERNAL_MAPPING.get(sid.lower(), sid.lower())
-
+            internal_sid = sid
             entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
             recorder = get_instance(self.hass)
@@ -835,7 +831,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             )
 
             target_entity_id = f"sensor.{station_prefix}_{sid}"
-            self._entity_id_map[api_key.lower()] = target_entity_id
+            self._entity_id_map[sid] = target_entity_id
 
             result[sid] = {
                 "value": value,
