@@ -19,7 +19,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PočasíMeteo from a config entry."""
 
     coordinator = PocasimeteoDataUpdateCoordinator(hass, entry)
+    _LOGGER.error("PM-TRACE: calling register_delayed_startup()")
     coordinator.register_delayed_startup()
+    _LOGGER.error("PM-TRACE: register_delayed_startup() DONE")
     
     # 1. KROK: První refresh proběhne HNED. Stáhne se JSON, naplní se struktury 
     # v paměti a self._entity_id_map, aby platformy věděly, jaké entity mají vytvořit.
@@ -35,7 +37,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     # 2. KROK: Zavedení platforem weather a sensor do systému (nyní už mají data v paměti)
+    _LOGGER.error("PM-TRACE: forwarding platforms")
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    _LOGGER.error("PM-TRACE: platforms forwarded")
     
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     return True
