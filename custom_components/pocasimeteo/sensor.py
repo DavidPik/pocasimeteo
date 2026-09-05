@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, SENSOR_DEFINITIONS, API_TO_INTERNAL_MAPPING
+from .const import DOMAIN, SENSOR_DEFINITIONS, API_TO_INTERNAL_MAPPING, CONF_STATION
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
