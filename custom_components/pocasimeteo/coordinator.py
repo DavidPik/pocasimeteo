@@ -282,6 +282,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self.station_metadata["lokalita_stanice"] = current.get("LokalitaStanice")
         self.station_metadata["srazky_den"] = current.get("SrazkyDen", 0)
         self.station_metadata["webcamera_url"] = current.get("Webkamera")
+        
         # Timestamp z API – pro frontend kartu
         api_ts_raw = current.get("Datum")
         if api_ts_raw:
