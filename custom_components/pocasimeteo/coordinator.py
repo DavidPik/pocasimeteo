@@ -366,24 +366,25 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Recorder při startu integrace ještě není inicializován. Odkládám filtraci historie na později.")
                 final_queue = []
 
-        # C. SPUŠTĚNÍ WORKERU (POUZE POKUD MÁME CHYBĚJÍCÍ DATA)
+        # C. SPUŠTĚNÍ WORKERU (OCHRANA PŘED NEKONEČNOU SMYČKOU A ZACYKLENÍM)
         if final_queue:
-            worker_payload = []
-            for item in final_queue:
-                row_data = dict(item["data"])
-                row_data["_computed_ts_utc"] = item["ts_utc"]
-                worker_payload.append(row_data)
-
-            if self._history_queue:
-                self._history_queue.extend(worker_payload)
+            # Pokud background worker již aktivně běží a sype data na disk,
+            # nová data do fronty nepřidáváme, abychom zamezili nekonečnému nafukování.
+            if self._diag_worker_running:
+                _LOGGER.debug("Worker historie již běží. Vynechávám duplicitní plnění fronty.")
             else:
+                worker_payload = []
+                for item in final_queue:
+                    row_data = dict(item["data"])
+                    row_data["_computed_ts_utc"] = item["ts_utc"]
+                    worker_payload.append(row_data)
+
                 self._history_queue = worker_payload
+                self._diag_queue_length = len(self._history_queue)
 
-            self._diag_queue_length = len(self._history_queue)
-
-            if self._ha_started and (self._history_task is None or self._history_task.done()):
-                _LOGGER.debug("Spouštím background worker pro doplnění mezer (velikost: %s)", self._diag_queue_length)
-                self._history_task = self.hass.async_create_task(self._history_worker())
+                if self._ha_started and (self._history_task is None or self._history_task.done()):
+                    _LOGGER.debug("Spouštím background worker pro doplnění mezer (velikost: %s)", self._diag_queue_length)
+                    self._history_task = self.hass.async_create_task(self._history_worker())
         else:
             _LOGGER.debug("Všechna historická data z JSONu již v DB existují. Vynechávám spuštění workeru.")
 
