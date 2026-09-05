@@ -252,9 +252,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         session = aiohttp_client.async_get_clientsession(self.hass)
 
         api_key = self.entry.data.get(CONF_API_KEY)
-        params = {
-            "KlicApi": api_key,
-        }
+        params = { "KlicApi": api_key }
 
         try:
             async with session.get(API_URL_BASE, params=params, timeout=30) as resp:
@@ -262,6 +260,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     raise UpdateFailed(f"API returned HTTP {resp.status}")
                 data = await resp.json()
         except Exception as err:
+            _LOGGER.error("PM-TRACE: API EXCEPTION: %r", err, exc_info=True)
             raise UpdateFailed(f"Cannot fetch PočasíMeteo API: {err}") from err
 
         # JSON očekává strukturu: hlavní aktuální měření + pole "Historie"
