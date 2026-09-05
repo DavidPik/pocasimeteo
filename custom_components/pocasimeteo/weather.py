@@ -35,7 +35,7 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         self._entry = entry
         
         # OSTRÁ OPRAVA: Kód stanice odvodíme přímo z konfiguračního objektu entry, nikoliv z dict koordinátoru
-        station_prefix = entry.title.lower().strip().replace(" ", "_")
+        station_prefix = entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
 
         self._attr_unique_id = f"{entry.entry_id}_weather"
         self.entity_id = f"weather.{station_prefix}"
