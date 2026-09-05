@@ -45,7 +45,7 @@ class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], Sen
         """Inicializace senzoru s přímým předáním config entry."""
         super().__init__(coordinator)
         self._sensor_id = sensor_id
-        station_prefix = entry.title.lower().strip().replace(" ", "_")
+        station_prefix = entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
 
         # Odvození interního ID entity (snake_case) přímo z entry
         internal_sid = API_TO_INTERNAL_MAPPING.get(sensor_id.lower(), sensor_id.lower())
