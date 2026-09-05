@@ -444,6 +444,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 updated_attrs["history_queue_length"] = self._diag_queue_length
                 updated_attrs["history_worker_running"] = self._diag_worker_running
                 updated_attrs["history_last_batch_size"] = self._diag_last_batch_size
+                
+                # OSTRÁ ARCHITEKTONICKÁ OPRAVA: Čas zápisu historie do DB musíme propsat 
+                # do klíče history_last_write_ts, ze kterého si ho weather.py přebírá!
                 if self._diag_last_write_ts:
                     updated_attrs["history_last_write_ts"] = self._diag_last_write_ts.isoformat()
 
@@ -451,10 +454,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             
             await asyncio.sleep(pause)
 
-        # --- KONEC CYKLU ---
+        # --- KONEC CYKLU WORKERU (FRONTA JE 0) ---
         self._diag_worker_running = False
         self._diag_queue_length = 0
         self._diag_last_batch_size = 0
+
+        # Po úspěšném importu celé historie vyvoláme přepočet dlouhodobých statistik z DB
+        if self.sensors_payload:
+            await self._update_recorder_statistics(self.sensors_payload)
 
         weather_entity_id = f"weather.{station_prefix}"
         weather_state = self.hass.states.get(weather_entity_id)
@@ -464,13 +471,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             updated_attrs["history_worker_running"] = False
             updated_attrs["history_last_batch_size"] = 0
             
-            # Zapíšeme čas posledního zápisu na disk do správného diagnostického atributu
+            # Aktualizujeme statistické struktury i v atributech běžící entity
+            if "sensor_stats" in self.station_metadata:
+                updated_attrs["sensor_stats"] = self.station_metadata["sensor_stats"]
+            
             if self._diag_last_write_ts:
                 updated_attrs["history_last_write_ts"] = self._diag_last_write_ts.isoformat()
                 
             self.hass.states.async_set(weather_entity_id, weather_state.state, updated_attrs)
 
-        _LOGGER.debug("Background worker úspěšně dokončil import chybějících mezer")
+        _LOGGER.debug("Background worker úspěšně dokončil import chybějících mezer a uvolnil zámek")
 
     def register_delayed_startup(self):
         """Zaregistruje systémový listener, který aktivuje worker až po úplném zavedení HA core."""
