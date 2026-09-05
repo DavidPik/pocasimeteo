@@ -19,7 +19,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PočasíMeteo from a config entry."""
 
     coordinator = PocasimeteoDataUpdateCoordinator(hass, entry)
-
+    coordinator.register_delayed_startup()
+    
     # 1. KROK: První refresh proběhne HNED. Stáhne se JSON, naplní se struktury 
     # v paměti a self._entity_id_map, aby platformy věděly, jaké entity mají vytvořit.
     try:
