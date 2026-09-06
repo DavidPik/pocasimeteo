@@ -287,16 +287,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # -------------------------------------------------------------------------
 
     async def _process_and_import_dataset(self, history_norm, station_prefix):
-        """
-        Zpracuje normalizovanou historii (interní klíče) a připraví ji
-        pro zápis do Recorderu. Neprovádí žádné výpočty intenzity srážek,
-        protože ty jsou již provedeny v _normalize_data().
-        """
-
         if not history_norm:
             return
 
-        # --- 1) Seřazení podle interního klíče "datum" ---
         try:
             sorted_measurements = sorted(
                 history_norm,
@@ -306,32 +299,27 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.error("PM-TRACE: HISTORY SORT ERROR: %r", err, exc_info=True)
             return
 
-        # --- 2) Příprava fronty pro Recorder (struktura, kterou očekává _history_worker) ---
         queue = []
 
         for m in sorted_measurements:
             try:
                 ts = datetime.fromisoformat(m["datum"])
 
-                points: list[dict] = []
+                points = []
                 for sid, value in m.items():
                     if sid == "datum":
                         continue
 
                     entity_id = f"sensor.{station_prefix}_{sid}"
-                    points.append(
-                        {
-                            "entity_id": entity_id,
-                            "value": value,
-                        }
-                    )
+                    points.append({
+                        "entity_id": entity_id,
+                        "value": value,
+                    })
 
-                queue.append(
-                    {
-                        "ts_utc": ts,
-                        "points": points,
-                    }
-                )
+                queue.append({
+                    "ts_utc": ts,
+                    "points": points,
+                })
 
             except Exception as err:
                 _LOGGER.error("PM-TRACE: HISTORY ITEM ERROR: %r", err, exc_info=True)
