@@ -380,11 +380,20 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             recorder = get_instance(self.hass)
             session_factory = recorder.get_session
 
-            await recorder.async_add_executor_job(
-                _insert_history_batch_sync_raw,
-                session_factory,
-                batch_points,
-            )
+            try:
+                await recorder.async_add_executor_job(
+                    _insert_history_batch_sync_raw,
+                    session_factory,
+                    batch_points,
+                )
+                # Uložíme čas zápisu do DB jen při úspěchu
+                self._diag_last_write_ts = dt_util.now()
+            except Exception as err:
+                _LOGGER.error("PM-TRACE: HISTORY WRITE ERROR: %r", err, exc_info=True)
+                _LOGGER.error("PM-TRACE: BATCH POINTS SAMPLE: %r", batch_points[:5])
+                # Pokud zápis selže, necháme _diag_last_write_ts = None
+                # a worker pokračuje na další dávku
+                continue
 
             # Uložíme čas zápisu do DB
             self._diag_last_write_ts = dt_util.now()
