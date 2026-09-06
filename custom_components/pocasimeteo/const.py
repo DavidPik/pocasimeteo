@@ -53,7 +53,7 @@ STEPPED_SENSOR_IDS = [
     "vitr_rychlost",
     "vitr_narazy",
     "vitr_smer",
-    "intenzita_srazek",
+    "srazky_intenzita",
 ]
 
 # ------------------------------------------------------------
@@ -94,7 +94,7 @@ SENSOR_DEFINITIONS: dict[str, dict[str, Any]] = {
         "api_key": "TlakRel",
         "color": "#8e24aa",
     },
-    "intenzita_srazek": {
+    "srazky_intenzita": {
         "name": "Intenzita srážek",
         "unit": "mm/h",
         "icon": "mdi:weather-rainy",
@@ -214,7 +214,7 @@ API_TO_INTERNAL_MAPPING = {
     "teplotavnejsi": "teplota_vnejsi",
     "vlhkostvnejsi": "vlhkost_vnejsi",
     "tlakrel": "tlak_relativni",
-    "srazkyintenzita": "intenzita_srazek",
+    "srazkyintenzita": "srazky_intenzita",
     "vitr": "vitr_rychlost",
     "vitrnarazy": "vitr_narazy",
     "vitrsmer": "vitr_smer",
