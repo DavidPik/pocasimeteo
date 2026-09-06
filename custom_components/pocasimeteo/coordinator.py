@@ -267,22 +267,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # Normalizace aktuálního měření do payloadu (sid → value/meta/attributes)
         normalized = self._normalize_data(data)
         self.sensors_payload = normalized
- //
-        # Uložení základních metadat stanice
-        self.station_metadata["lokalita_stanice"] = current_norm.get("LokalitaStanice")
-        self.station_metadata["srazky_den"] = current_norm.get("SrazkyDen", 0)
-        self.station_metadata["webcamera_url"] = current_norm.get("Webkamera")
-        
-        # Timestamp z API – pro frontend kartu
-        api_ts_raw = current_norm.get("Datum")
-        if api_ts_raw:
-            try:
-                self.station_metadata["api_timestamp"] = dt_util.parse_datetime(
-                    api_ts_raw.replace("Z", "")
-                ).isoformat()
-            except Exception:
-                self.station_metadata["api_timestamp"] = dt_util.now().isoformat()
-//
+
         # Historii zpracujeme pomocí již normalizovaných dat
         station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
         history_norm = normalized.get("history", [])
