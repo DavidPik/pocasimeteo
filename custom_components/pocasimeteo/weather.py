@@ -42,10 +42,7 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         self._attr_name = entry.title
 
         # ARCHITEKTURA CORE HA: Tato entita poskytuje pouze lokální živá data.
-        self._attr_supported_features = (
-            WeatherEntityFeature.PRECIPITATION |
-            WeatherEntityFeature.PRECIPITATION_INTENSITY
-        )
+        self._attr_supported_features = 0
         self._attr_device_info = coordinator.station_metadata.get("device_info")
 
     @property
