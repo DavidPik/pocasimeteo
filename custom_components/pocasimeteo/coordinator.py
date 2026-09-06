@@ -468,50 +468,102 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     async def _update_recorder_statistics(self, data: dict[str, dict]):
         """
         Načte historii ze SQL Recorderu a spočítá dlouhodobé statistiky.
-        Výsledky ukládá exkluzivně do extended slovníku ve self.station_metadata["sensor_stats"].
+        Výsledky ukládá exkluzivně do self.station_metadata["sensor_stats"].
         """
-        now_local = dt_util.now()  # CEST
+
+        # Použijeme lokální čas (CEST), protože Recorder má last_changed_ts uložené jako epoch z lokálního času
+        now_local = dt_util.now()
         start_local = now_local - timedelta(hours=self._statistics_interval)
         start_timestamp = start_local.timestamp()
 
-        station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
+        station_prefix = (
+            self.entry.data.get(CONF_STATION)
+            .lower()
+            .strip()
+            .replace(" ", "_")
+        )
 
         if "sensor_stats" not in self.station_metadata:
             self.station_metadata["sensor_stats"] = {}
 
-        if internal_sid == "vitr_smer":
-            sin_sum = 0.0
-            cos_sum = 0.0
-            for val in values:
-                rad = math.radians(val)
-                sin_sum += math.sin(rad)
-                cos_sum += math.cos(rad)
+        recorder = get_instance(self.hass)
+        session_factory = recorder.get_session
 
-            count = len(values)
-            avg_sin = sin_sum / count
-            avg_cos = cos_sum / count
+        # HLAVNÍ CYKLUS — iterujeme přes všechny senzory v sensors_payload
+        for sid, payload in data.items():
 
-            avg_deg = math.degrees(math.atan2(avg_sin, avg_cos)) % 360.0
+            internal_sid = sid
+            entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
-            rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
-            if rounded:
-                common_modes = Counter(rounded).most_common(1)
-                mode_deg = common_modes[0][0]
-            else:
-                mode_deg = values[0]
-
-            r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
-            var_deg = (
-                math.degrees(math.sqrt(-2.0 * math.log(r_vector)))
-                if 0.001 < r_vector < 1.0
-                else 0.0
+            # Načteme historii z Recorderu
+            values = await recorder.async_add_executor_job(
+                _query_recorder_history_sync,
+                session_factory,
+                entity_id,
+                start_timestamp,
             )
 
-            self.station_metadata["sensor_stats"][sid] = {
-                "stats_avg": round(avg_deg, 1),
-                "stats_mode": round(mode_deg, 1),
-                "stats_var": round(min(var_deg, 180.0), 1),
-            }
+            # Fallback — Recorder nemá žádná data
+            if not values:
+                if internal_sid == "vitr_smer":
+                    self.station_metadata["sensor_stats"][sid] = {
+                        "stats_avg": payload["value"],
+                        "stats_mode": payload["value"],
+                        "stats_var": 0.0,
+                    }
+                else:
+                    self.station_metadata["sensor_stats"][sid] = {
+                        "stats_min": payload["value"],
+                        "stats_max": payload["value"],
+                    }
+                continue
+
+            # --- Vektorové statistiky pro směr větru ---
+            if internal_sid == "vitr_smer":
+
+                sin_sum = 0.0
+                cos_sum = 0.0
+
+                for val in values:
+                    rad = math.radians(val)
+                    sin_sum += math.sin(rad)
+                    cos_sum += math.cos(rad)
+
+                count = len(values)
+                avg_sin = sin_sum / count
+                avg_cos = cos_sum / count
+
+                # Průměrný směr (circular mean)
+                avg_deg = math.degrees(math.atan2(avg_sin, avg_cos)) % 360.0
+
+                # Modus (nejčastější směr, zaokrouhlený na 22.5°)
+                rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
+                if rounded:
+                    common_modes = Counter(rounded).most_common(1)
+                    mode_deg = common_modes[0][0]
+                else:
+                    mode_deg = values[0]
+
+                # Variabilita (circular variance)
+                r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
+                var_deg = (
+                    math.degrees(math.sqrt(-2.0 * math.log(r_vector)))
+                    if 0.001 < r_vector < 1.0
+                    else 0.0
+                )
+
+                self.station_metadata["sensor_stats"][sid] = {
+                    "stats_avg": round(avg_deg, 1),
+                    "stats_mode": round(mode_deg, 1),
+                    "stats_var": round(min(var_deg, 180.0), 1),
+                }
+
+            # --- Standardní statistiky pro ostatní senzory ---
+            else:
+                self.station_metadata["sensor_stats"][sid] = {
+                    "stats_min": round(min(values), 1),
+                    "stats_max": round(max(values), 1),
+                }
 
     # -------------------------------------------------------------------------
     # TRANSFORMAČNÍ A NORMALIZAČNÍ METODY PRO STRUKTURY HA
