@@ -79,7 +79,7 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         return "hPa"
 
     @property
-    def native_precipitation_intensity(self) -> float | None:
+    def precipitation_intensity(self) -> float | None:
         sensor = self.coordinator.sensors_payload.get("srazky_intenzita")
         if sensor and sensor.get("value") is not None:
             return float(sensor["value"])
