@@ -277,12 +277,15 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         self.sensors_payload = normalized
  
         # Uložení základních metadat stanice
-        self.station_metadata["lokalita_stanice"] = current.get("LokalitaStanice")
-        self.station_metadata["srazky_den"] = current.get("SrazkyDen", 0)
-        self.station_metadata["webcamera_url"] = current.get("Webkamera")
+        current_norm = normalized.get("current", {})
+        history_norm = normalized.get("history", [])
+
+        self.station_metadata["lokalita_stanice"] = current_norm.get("LokalitaStanice")
+        self.station_metadata["srazky_den"] = current_norm.get("SrazkyDen", 0)
+        self.station_metadata["webcamera_url"] = current_norm.get("Webkamera")
         
         # Timestamp z API – pro frontend kartu
-        api_ts_raw = current.get("Datum")
+        api_ts_raw = current_norm.get("Datum")
         if api_ts_raw:
             try:
                 self.station_metadata["api_timestamp"] = dt_util.parse_datetime(
@@ -294,7 +297,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # Zpracování datasetu historie – výpočet intenzity srážek, rolling statistik
         # a příprava payload‑centrické fronty pro Recorder
         station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
-        await self._process_and_import_dataset(history, station_prefix)
+        await self._process_and_import_dataset(history_norm, station_prefix)
 
         # Po prvním úspěšném update přepneme interval na hodnotu z konfigurace
         if self.update_interval.total_seconds() == 30:
