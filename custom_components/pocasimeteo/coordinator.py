@@ -264,15 +264,16 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed(f"Cannot fetch PočasíMeteo API: {err}") from err
 
         # API vrací list: [metadata, current, history...]
-        metadata = data[0] if len(data) > 0 else {}
+        metadata_raw = data[0] if len(data) > 0 else {}
         current_raw = data[1] if len(data) > 1 else {}
         history_raw = data[2:] if len(data) > 2 else []
 
-        current = self._normalize_current(current_raw)
-        history = self._normalize_history(history_raw)
-
         # Normalizace aktuálního měření do payloadu (sid → value/meta/attributes)
-        normalized = self._normalize_data(current)
+        normalized = self._normalize_data({
+            "metadata": metadata_raw,
+            "current": current_raw,
+            "history": history_raw,
+        })
         self.sensors_payload = normalized
  
         # Uložení základních metadat stanice
@@ -746,126 +747,53 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # TRANSFORMAČNÍ A NORMALIZAČNÍ METODY PRO STRUKTURY HA
     # -------------------------------------------------------------------------
 
-    def _normalize_data(self, raw: dict) -> dict[str, dict[str, any]]:
-        """
-        Transformuje syrový JSON aktuálního měření na payload[sid],
-        včetně metadat, timestampu a mapování na entity_id.
-        """
-        result: dict[str, dict] = {}
-        timestamp_str = dt_util.now().isoformat()
-        station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
+    def _normalize_data(self, data):
+        """Normalize PočasíMeteo API response."""
 
-        # A. Staticky definované senzory z SENSOR_DEFINITIONS
-        for sid, meta in SENSOR_DEFINITIONS.items():
-            api_key = meta["api_key"]
-            value = raw.get(api_key)
+        # API vrací list: [metadata, current, history...]
+        if isinstance(data, list):
+            metadata = data[0] if len(data) > 0 else {}
+            current_raw = data[1] if len(data) > 1 else {}
+            history_raw = data[2:] if len(data) > 2 else []
+        else:
+            # fallback pro starý formát (bezpečnost)
+            metadata = data.get("Metadata", {})
+            current_raw = data.get("Aktualni", {})
+            history_raw = data.get("Historie", [])
 
-            # Speciální případ: intenzita srážek – použijeme poslední spočtenou hodnotu
-            key_lower = api_key.lower()
-            internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
-            if internal_sid == "intenzita_srazek":
-                # Pokud API neposílá přímo intenzitu, použijeme hodnotu z posledního výpočtu
-                if value is None:
-                    value = self._latest_rain_intensity
+        # Normalizace aktuálních hodnot
+        current = {
+            "datum": current_raw.get("Datum"),
+            "teplota_vnejsi": self._to_float(current_raw.get("TeplotaVnejsi")),
+            "teplota_vnitrni": self._to_float(current_raw.get("TeplotaVnitrni")),
+            "tlak_relativni": self._to_float(current_raw.get("TlakRel")),
+            "vlhkost_vnejsi": self._to_float(current_raw.get("VlhkostVnejsi")),
+            "vlhkost_vnitrni": self._to_float(current_raw.get("VlhkostVnitrni")),
+            "slunecni_zareni": self._to_float(current_raw.get("SlunZareni")),
+            "uv_index": self._to_float(current_raw.get("UVindex")),
+            "vitr_rychlost": self._to_float(current_raw.get("Vitr")),
+            "vitr_narazy": self._to_float(current_raw.get("VitrNarazy")),
+            "vitr_smer": self._to_int(current_raw.get("VitrSmer")),
+            "srazky_den": self._to_float(current_raw.get("SrazkyDen")),
+        }
 
-            if value is None:
-                continue
+        # Normalizace historie
+        history = []
+        for item in history_raw:
+            history.append({
+                "datum": item.get("Datum"),
+                "teplota_vnejsi": self._to_float(item.get("TeplotaVnejsi")),
+                "tlak_relativni": self._to_float(item.get("TlakRel")),
+                "vlhkost_vnejsi": self._to_float(item.get("VlhkostVnejsi")),
+                "slunecni_zareni": self._to_float(item.get("SlunZareni")),
+                "vitr_rychlost": self._to_float(item.get("Vitr")),
+                "vitr_narazy": self._to_float(item.get("VitrNarazy")),
+                "vitr_smer": self._to_int(item.get("VitrSmer")),
+                "srazky_den": self._to_float(item.get("SrazkyDen")),
+            })
 
-            if isinstance(value, str):
-                try:
-                    value = float(value) if "." in value else int(value)
-                except ValueError:
-                    pass
-
-            opts = self._sensor_options.get(sid, DEFAULT_SENSOR_OPTIONS.get(sid, {}))
-            target_entity_id = f"sensor.{station_prefix}_{internal_sid}"
-
-            # Registr mapování API klíče na entity_id – pro případné fallbacky
-            self._entity_id_map[api_key.lower()] = target_entity_id
-
-            result[sid] = {
-                "value": value,
-                "meta": {
-                    "name": meta["name"],
-                    "unit": meta["unit"],
-                    "icon": meta.get("icon"),
-                    "device_class": meta.get("device_class"),
-                    "state_class": meta.get("state_class"),
-                    "type": meta["type"],
-                    "order": opts.get("order", meta["order"]),
-                    "color": opts.get("color", meta["color"]),
-                    "style": opts.get("style", "smooth"),
-                    "visible": opts.get("visible", True),
-                },
-                "attributes": {
-                    "timestamp": timestamp_str,
-                },
-            }
-
-            # Rolling min/max pro lineární senzory – zůstanou v RAM
-            internal_sid_for_stats = internal_sid
-            if internal_sid_for_stats != "vitr_smer":
-                # Základní rolling statistiky pro senzory (min/max) – z aktuálního běhu
-                # (dlouhodobé statistiky z Recorderu se počítají zvlášť)
-                result[sid]["attributes"]["min"] = value
-                result[sid]["attributes"]["max"] = value
-
-        # B. Dynamicky objevované senzory z doplňkových čidel
-        for api_key, value in raw.items():
-            if api_key in (
-                "Datum",
-                "SrazkyDen",
-                "LokalitaStanice",
-                "DoplCidlaJson",
-                "Historie",
-                "Webkamera",
-                "_computed_ts_utc",
-            ):
-                continue
-
-            already_mapped = any(m["api_key"] == api_key for m in SENSOR_DEFINITIONS.values())
-            if already_mapped:
-                continue
-
-            if isinstance(value, str):
-                try:
-                    value = float(value) if "." in value else int(value)
-                except ValueError:
-                    pass
-
-            meta = get_dynamic_sensor_meta(api_key)
-            sid = api_key.lower()
-            opts = self._sensor_options.get(
-                sid,
-                {"order": meta["order"], "color": meta["color"], "style": "smooth", "visible": True},
-            )
-
-            target_entity_id = f"sensor.{station_prefix}_{sid}"
-            self._entity_id_map[sid] = target_entity_id
-
-            result[sid] = {
-                "value": value,
-                "meta": {
-                    "name": meta["name"],
-                    "unit": meta["unit"],
-                    "icon": meta.get("icon"),
-                    "device_class": meta.get("device_class"),
-                    "state_class": meta.get("state_class"),
-                    "type": meta["type"],
-                    "order": opts["order"],
-                    "color": opts["color"],
-                    "style": opts["style"],
-                    "visible": opts["visible"],
-                },
-                "attributes": {
-                    "timestamp": timestamp_str,
-                },
-            }
-
-        # CENTRÁLNÍ PUBLIKACE DIAGNOSTIKY DO GLOBÁLNÍCH METADAT WEATHER
-        self.station_metadata["history_queue_length"] = self._diag_queue_length
-        self.station_metadata["history_worker_running"] = self._diag_worker_running
-        self.station_metadata["history_missing_count"] = self._diag_missing_count
-        self.station_metadata["history_last_batch_size"] = self._diag_last_batch_size
-
-        return result
+        return {
+            "metadata": metadata,
+            "current": current,
+            "history": history,
+        }
