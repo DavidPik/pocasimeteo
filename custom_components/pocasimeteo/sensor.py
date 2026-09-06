@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
