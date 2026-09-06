@@ -8,7 +8,8 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfPressure,
     UnitOfSpeed,
-    UnitOfPrecipitation,
+    UnitOfPrecipitationDepth,
+    UnitOfPrecipitationIntensity,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -65,8 +66,8 @@ class PocasimeteoWeather(
         self._attr_native_pressure_unit = UnitOfPressure.HPA
         self._attr_native_wind_speed_unit = UnitOfSpeed.KILOMETERS_PER_HOUR
         self._attr_native_wind_gust_unit = UnitOfSpeed.KILOMETERS_PER_HOUR
-        self._attr_native_precipitation_unit = UnitOfPrecipitation.MILLIMETERS
-        self._attr_native_precipitation_intensity_unit = "mm/h"
+        self._attr_native_precipitation_unit = UnitOfPrecipitationDepth.MILLIMETERS
+        self._attr_native_precipitation_intensity_unit = UnitOfPrecipitationIntensity.MILLIMETERS_PER_HOUR
 
         self._attr_supported_features = 0
         self._attr_device_info = coordinator.station_metadata.get("device_info")
