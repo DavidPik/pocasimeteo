@@ -80,86 +80,124 @@ def _query_existing_timestamps_sync(session_factory, sample_entity, processed_ti
 
 def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
     """
-    Kompletní hromadný zápis celé dávky v jednom synchronním DB vlákně.
-    Tato verze již NEPRACUJE s API klíči – používá přímo entity_id, hodnotu a timestamp.
+    Optimalizovaný a bezpečný zápis historie do Recorderu.
+    - metadata se načítají jedním SELECTem
+    - shared StateAttributes se načítají jedním SELECTem
+    - SELECT je vždy v no_autoflush
+    - INSERT probíhá v samostatných transakcích
+    - retry/backoff řeší krátkodobé zámky SQLite
     """
-    with session_factory() as session:
-        meta_cache: dict[str, int] = {}
-        attr_id = None
 
-        for m in batch_points:
-            ts = m.get("_computed_ts_utc")
-            entity_id = m.get("entity_id")
-            value = m.get("value")
+    session = session_factory()
 
-            if not ts or not entity_id:
+    # ---------------------------------------------------------
+    # 1) Přednačtení všech entity_id z batche
+    # ---------------------------------------------------------
+    entity_ids = {m.get("entity_id") for m in batch_points if m.get("entity_id")}
+    meta_cache: dict[str, int] = {}
+
+    # ---------------------------------------------------------
+    # 2) Přednačtení metadata jedním SELECTem
+    # ---------------------------------------------------------
+    if entity_ids:
+        with session.no_autoflush:
+            existing_meta = session.execute(
+                select(StatesMeta).where(StatesMeta.entity_id.in_(entity_ids))
+            ).all()
+
+        for row in existing_meta:
+            meta_obj = row[0]
+            meta_cache[meta_obj.entity_id] = meta_obj.metadata_id
+
+    # ---------------------------------------------------------
+    # 3) Přednačtení sdíleného prázdného JSON atributu
+    # ---------------------------------------------------------
+    with session.no_autoflush:
+        attr_row = session.execute(
+            select(StateAttributes).where(StateAttributes.shared_attrs == "{}")
+        ).scalar_one_or_none()
+
+    if attr_row is None:
+        with session.begin():
+            attr_row = StateAttributes(shared_attrs="{}")
+            session.add(attr_row)
+
+    attr_id = attr_row.attributes_id
+
+    # ---------------------------------------------------------
+    # 4) Zápis jednotlivých bodů
+    # ---------------------------------------------------------
+    for m in batch_points:
+        ts = m.get("_computed_ts_utc")
+        entity_id = m.get("entity_id")
+        value = m.get("value")
+
+        if not ts or not entity_id:
+            continue
+
+        # Převod času na float timestamp
+        utc_timestamp = ts.replace(tzinfo=None).timestamp()
+
+        # Konverze hodnoty na float nebo string
+        if value in (None, "", " ", "N/A", "--"):
+            continue
+
+        try:
+            v_float = float(value)
+            if math.isnan(v_float):
                 continue
+            formatted_state = f"{v_float:.1f}"
+        except (ValueError, TypeError):
+            formatted_state = str(value)
 
-            # Převod času na float timestamp
-            utc_timestamp = ts.replace(tzinfo=None).timestamp()
-
-            # Konverze hodnoty na float nebo string
-            if value in (None, "", " ", "N/A", "--"):
-                continue
-
-            try:
-                v_float = float(value)
-                if math.isnan(v_float):
-                    continue
-                formatted_state = f"{v_float:.1f}"
-            except (ValueError, TypeError):
-                formatted_state = str(value)
-
-            # Metadata (StatesMeta)
-            metadata_id = meta_cache.get(entity_id)
-            if not metadata_id:
-                meta_rows = session.execute(
+        # ---------------------------------------------------------
+        # 5) Metadata – pokud chybí, vytvoříme je
+        # ---------------------------------------------------------
+        metadata_id = meta_cache.get(entity_id)
+        if metadata_id is None:
+            with session.no_autoflush:
+                meta_obj = session.execute(
                     select(StatesMeta).where(StatesMeta.entity_id == entity_id)
-                ).all()
+                ).scalar_one_or_none()
 
-                if meta_rows:
-                    meta_row = meta_rows[0][0]
-                else:
-                    meta_row = StatesMeta(entity_id=entity_id)
-                    session.add(meta_row)
-                    session.flush()
+            if meta_obj is None:
+                with session.begin():
+                    meta_obj = StatesMeta(entity_id=entity_id)
+                    session.add(meta_obj)
 
-                metadata_id = meta_row.metadata_id
-                meta_cache[entity_id] = metadata_id
+            metadata_id = meta_obj.metadata_id
+            meta_cache[entity_id] = metadata_id
 
-            # Attributes (StateAttributes) – sdílený prázdný JSON
-            if attr_id is None:
-                attr_rows = session.execute(
-                    select(StateAttributes).where(StateAttributes.shared_attrs == "{}")
-                ).all()
+        # ---------------------------------------------------------
+        # 6) INSERT States – samostatná transakce + retry/backoff
+        # ---------------------------------------------------------
+        retry = 0
+        while retry < 5:
+            try:
+                with session.begin():
+                    row = States(
+                        entity_id=entity_id,
+                        metadata_id=metadata_id,
+                        attributes_id=attr_id,
+                        state=formatted_state,
+                        last_changed_ts=utc_timestamp,
+                        last_updated_ts=utc_timestamp,
+                        last_changed=ts,
+                        last_updated=ts,
+                    )
+                    session.add(row)
+                break  # úspěch
+            except OperationalError:
+                retry += 1
+                time.sleep(0.15 * retry)  # exponenciální backoff
+                continue
 
-                if attr_rows:
-                    # vezmeme první existující řádek
-                    attr_row = attr_rows[0][0]
-                else:
-                    # vytvoříme nový sdílený prázdný JSON
-                    attr_row = StateAttributes(shared_attrs="{}")
-                    session.add(attr_row)
-                    session.flush()
-
-                attr_id = attr_row.attributes_id
-
-            # Vytvoření řádku States
-            row = States(
-                entity_id=entity_id,
-                metadata_id=metadata_id,
-                attributes_id=attr_id,
-                state=formatted_state,
-                last_changed_ts=utc_timestamp,
-                last_updated_ts=utc_timestamp,
-                last_changed=ts,
-                last_updated=ts,
+        if retry == 5:
+            _LOGGER.error(
+                "PM-TRACE: HISTORY WRITE FAILED AFTER RETRIES for %s", entity_id
             )
-            session.add(row)
 
-        # Commit celé dávky
-        session.commit()
-
+    session.close()
 
 class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     """
