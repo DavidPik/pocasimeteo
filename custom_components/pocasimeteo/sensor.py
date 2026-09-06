@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import logging
-from homeassistant.components.sensor import SensorEntity
+import math
+from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, SENSOR_DEFINITIONS, API_TO_INTERNAL_MAPPING, CONF_STATION, DEFAULT_SENSOR_OPTIONS, get_dynamic_sensor_meta
+from .const import (
+    DOMAIN,
+    SENSOR_DEFINITIONS,
+    API_TO_INTERNAL_MAPPING,
+    CONF_STATION,
+    get_dynamic_sensor_meta,
+)
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -18,8 +25,10 @@ async def async_setup_entry(
 ) -> None:
     """Nastavení senzorů na základě konfigurace integrace."""
     data_source = hass.data[DOMAIN][entry.entry_id]
-    coordinator = data_source if not isinstance(data_source, dict) else data_source.get("coordinator")
-    
+    coordinator = (
+        data_source if not isinstance(data_source, dict) else data_source.get("coordinator")
+    )
+
     if coordinator is None:
         _LOGGER.error("Koordinátor nebyl v hass.data nalezen při zavádění senzorů")
         return
@@ -42,40 +51,53 @@ class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], Sen
     """Reprezentace pasivního senzoru meteostanice PočasíMeteo."""
 
     def __init__(self, coordinator: PocasimeteoDataUpdateCoordinator, entry, sensor_id: str):
-        """Inicializace senzoru s přímým předáním config entry."""
         super().__init__(coordinator)
         self._sensor_id = sensor_id
+
         station_prefix = entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
 
-        # Odvození interního ID entity (snake_case) přímo z entry
         internal_sid = API_TO_INTERNAL_MAPPING.get(sensor_id.lower(), sensor_id.lower())
-        self._internal_sid = internal_sid 
+        self._internal_sid = internal_sid
+
         self._attr_unique_id = f"{entry.entry_id}_{internal_sid}"
         self.entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
-       # OSTRÁ OPRAVA: Metadata o jednotkách musíme číst ze statického const.py, 
-        # protože při startu HA je sensors_payload ještě prázdný, což způsobovalo ztrátu jednotek (None)
+        # Metadata senzoru
         if sensor_id in SENSOR_DEFINITIONS:
             meta = SENSOR_DEFINITIONS[sensor_id]
         else:
             meta = get_dynamic_sensor_meta(sensor_id)
 
         self._attr_name = meta.get("name", sensor_id)
-        # Jednotka musí být vždy stabilní – nikdy nesmí být None, pokud není None v definici
+
+        # --- OPRAVA JEDNOTEK ---
         unit = meta.get("unit")
 
+        # Směr větru musí mít jednotku °
+        if internal_sid == "vitr_smer":
+            unit = "°"
+            self._attr_device_class = None
+            self._attr_state_class = None
+
+        # Sluneční záření musí mít jednotku W/m²
+        elif internal_sid == "slunecni_zareni":
+            unit = "W/m²"
+            self._attr_device_class = SensorDeviceClass.IRRADIANCE
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+
         # UV index má jednotku None správně
-        if unit is None and self._internal_sid != "uv_index":
-            _LOGGER.warning(
-                "Senzor %s má neočekávanou jednotku None – nastavuje se podle definice",
-                self._internal_sid,
-            )
+        elif internal_sid == "uv_index":
+            unit = None
+            self._attr_device_class = SensorDeviceClass.UV_INDEX
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+
+        else:
+            self._attr_device_class = meta.get("device_class")
+            self._attr_state_class = meta.get("state_class")
 
         self._attr_native_unit_of_measurement = unit
         self._attr_icon = meta.get("icon")
-        self._attr_device_class = meta.get("device_class")
-        self._attr_state_class = meta.get("state_class")
-        
+
         # Propojení s hlavním zařízením meteostanice v HA Jádru
         self._attr_device_info = coordinator.station_metadata.get("device_info")
 
@@ -92,9 +114,7 @@ class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], Sen
             "timestamp": attributes.get("timestamp")
         }
 
-        internal_sid = self._internal_sid  # už ho máš, nemusíš znovu mapovat
-
-        if internal_sid == "vitr_smer":
+        if self._internal_sid == "vitr_smer":
             if "vitr_smer_avg" in attributes:
                 attrs["vitr_smer_avg"] = attributes["vitr_smer_avg"]
             if "vitr_smer_mode" in attributes:
