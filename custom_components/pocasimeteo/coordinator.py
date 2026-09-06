@@ -113,11 +113,13 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
             # Metadata (StatesMeta)
             metadata_id = meta_cache.get(entity_id)
             if not metadata_id:
-                meta_row = session.execute(
+                meta_rows = session.execute(
                     select(StatesMeta).where(StatesMeta.entity_id == entity_id)
-                ).scalar_one_or_none()
+                ).all()
 
-                if not meta_row:
+                if meta_rows:
+                    meta_row = meta_rows[0][0]
+                else:
                     meta_row = StatesMeta(entity_id=entity_id)
                     session.add(meta_row)
                     session.flush()
@@ -284,10 +286,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             )
             self.update_interval = timedelta(minutes=update_interval_minutes)
 
-        # Fallback: pokud není žádná fronta pro historii, spočítáme statistiky přímo
-        if not self._history_queue and self.sensors_payload:
+         # Vždy se pokusíme spočítat statistiky z Recorderu,
+        # i když fronta není prázdná (budou založené na tom, co už v DB je)
+        if self.sensors_payload:
             await self._update_recorder_statistics(self.sensors_payload)
-
+    
         return self.sensors_payload
 
     # -------------------------------------------------------------------------
