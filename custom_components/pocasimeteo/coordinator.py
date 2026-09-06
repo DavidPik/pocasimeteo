@@ -259,14 +259,17 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 if resp.status != 200:
                     raise UpdateFailed(f"API returned HTTP {resp.status}")
                 data = await resp.json()
-                _LOGGER.error(f"PM-TRACE: RAW API RESPONSE: {data}")
         except Exception as err:
             _LOGGER.error("PM-TRACE: API EXCEPTION: %r", err, exc_info=True)
             raise UpdateFailed(f"Cannot fetch PočasíMeteo API: {err}") from err
 
-        # JSON očekává strukturu: hlavní aktuální měření + pole "Historie"
-        current = data.get("Aktualni", data)
-        history = data.get("Historie", [])
+        # API vrací list: [metadata, current, history...]
+        metadata = data[0] if len(data) > 0 else {}
+        current_raw = data[1] if len(data) > 1 else {}
+        history_raw = data[2:] if len(data) > 2 else []
+
+        current = self._normalize_current(current_raw)
+        history = self._normalize_history(history_raw)
 
         # Normalizace aktuálního měření do payloadu (sid → value/meta/attributes)
         normalized = self._normalize_data(current)
