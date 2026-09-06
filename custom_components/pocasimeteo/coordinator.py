@@ -266,7 +266,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # API vrací list: [metadata, current, history...]
         # Normalizace aktuálního měření do payloadu (sid → value/meta/attributes)
         normalized = self._normalize_data(data)
-        self.sensors_payload = normalized
+        self.sensors_payload = normalized["sensors"]
 
         # Historii zpracujeme pomocí již normalizovaných dat
         station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
@@ -286,232 +286,59 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # UNIFIKOVANÉ ZPRACOVÁNÍ DATASETU (LOGIKA V JEDNOM PRŮCHODU)
     # -------------------------------------------------------------------------
 
-    async def _process_and_import_dataset(self, measurements: list[dict], station_prefix: str):
+    async def _process_and_import_dataset(self, history_norm, station_prefix):
         """
-        Sloučená logika:
-        1) spočítá intenzitu srážek,
-        2) naplní rolling statistiky,
-        3) připraví payload‑centrickou frontu pro Recorder (entity_id + value + ts),
-        4) spustí background worker, pokud jsou v DB mezery.
+        Zpracuje normalizovanou historii (interní klíče) a připraví ji
+        pro zápis do Recorderu. Neprovádí žádné výpočty intenzity srážek,
+        protože ty jsou již provedeny v _normalize_data().
         """
-        if not measurements:
-            return None
 
-        # Seřazení od nejstaršího po nejnovější pro správnou srážkovou intenzitu
-        sorted_measurements = sorted(
-            measurements,
-            key=lambda m: datetime.fromisoformat(m["Datum"]),
-        )
+        if not history_norm:
+            return
 
-        extracted_stats: dict[str, list[float]] = {}
-        previous_rain = None
-        previous_ts = None
-        prepared_history_points: list[dict] = []
-        processed_timestamps = set()
-
-        live_boundary = time.time() - 600  # 10 minut
-        local_tz = dt_util.get_time_zone(self.hass.config.time_zone)
-
-        # A. HLAVNÍ JEDINÝ CYKLUS NAD DATASETEM
-        for m in sorted_measurements:
-            ts_raw = m.get("Datum")
-            if not ts_raw:
-                continue
-
-            try:
-                ts_utc_with_tz = dt_util.parse_datetime(ts_raw.replace("Z", ""))
-                utc_timestamp = ts_utc_with_tz.timestamp()
-                ts_utc_naive = ts_utc_with_tz.replace(tzinfo=None)
-            except Exception as e:
-                _LOGGER.error("Chyba při konverzi času u bodu %s: %s", ts_raw, e)
-                continue
-
-            # intenzita srážek se nyní počítá v _normalize_data()
-            intensity = m.get("srazky_intenzita", 0.0)
-
-            # Sběr dat pro rolling statistiky – pracujeme už jen s interními sid
-            for sid, meta in SENSOR_DEFINITIONS.items():
-                api_key = meta["api_key"]
-                key_lower = api_key.lower()
-                internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
-
-                # Speciální případ: intenzita srážek je syntetická veličina
-                if internal_sid == "intenzita_srazek":
-                    value = intensity
-                else:
-                    value = m.get(api_key)
-
-                if value in (None, "", " ", "N/A", "--"):
-                    continue
-
-                try:
-                    v_float = float(value)
-                    if math.isnan(v_float):
-                        continue
-                except Exception:
-                    continue
-
-                extracted_stats.setdefault(internal_sid, []).append(v_float)
-
-            # Příprava bodu pro historii (pokud je starší než 10 minut)
-            if utc_timestamp <= live_boundary:
-                # Pro každý statický senzor připravíme payload‑centrický bod:
-                points_for_ts: list[dict] = []
-                for sid, meta in SENSOR_DEFINITIONS.items():
-                    api_key = meta["api_key"]
-                    key_lower = api_key.lower()
-                    internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
-
-                    if internal_sid == "intenzita_srazek":
-                        value = intensity
-                    else:
-                        value = m.get(api_key)
-
-                    if value in (None, "", " ", "N/A", "--"):
-                        continue
-
-                    # Najdeme entity_id z registru (byl naplněn v __init__ a _normalize_data)
-                    entity_id = self._entity_id_map.get(api_key.lower())
-                    if not entity_id:
-                        # Fallback – deterministické odvození
-                        entity_id = f"sensor.{station_prefix}_{internal_sid}"
-
-                    try:
-                        v_float = float(value)
-                        if math.isnan(v_float):
-                            continue
-                    except Exception:
-                        continue
-
-                    points_for_ts.append(
-                        {
-                            "_computed_ts_utc": ts_utc_naive,
-                            "entity_id": entity_id,
-                            "value": v_float,
-                        }
-                    )
-
-                if points_for_ts:
-                    prepared_history_points.append(
-                        {
-                            "ts_utc": ts_utc_naive,
-                            "ts_float": utc_timestamp,
-                            "points": points_for_ts,
-                        }
-                    )
-                    processed_timestamps.add(utc_timestamp)
-
-        # B. JEDEN HROMADNÝ DOTAZ DO DB (ODSTRANĚNÍ DUPLICIT S KONTROLOU DOSTUPNOSTI RECORDERU)
-        final_queue: list[dict] = []
-
-        if prepared_history_points:
-            recorder_instance = None
-            try:
-                recorder_instance = get_instance(self.hass)
-            except Exception:
-                recorder_instance = None
-
-            if recorder_instance and hasattr(recorder_instance, "get_session"):
-                sample_entity = f"sensor.{station_prefix}_teplota_vnejsi"
-                try:
-                    session_factory = recorder_instance.get_session
-                    existing_timestamps = await recorder_instance.async_add_executor_job(
-                        _query_existing_timestamps_sync,
-                        session_factory,
-                        sample_entity,
-                        processed_timestamps,
-                    )
-                except Exception as db_err:
-                    _LOGGER.warning(
-                        "Hromadný dotaz na existenci historie selhal (DB se zavedla, ale neodpovídá): %s",
-                        db_err,
-                    )
-                    existing_timestamps = set()
-
-                # Do fronty pustíme POUZE ty body, které prokazatelně v databázi ještě NEJSOU
-                final_queue = [
-                    pt for pt in prepared_history_points if pt["ts_float"] not in existing_timestamps
-                ]
-            else:
-                _LOGGER.debug(
-                    "Recorder při startu integrace ještě není inicializován. "
-                    "Odkládám filtraci historie na později."
-                )
-                final_queue = []
-
-        # C. SPUŠTĚNÍ WORKERU (OCHRANA PŘED NEKONEČNOU SMYČKOU A ZACYKLENÍM)
-        if final_queue:
-            if self._diag_worker_running:
-                _LOGGER.debug("Worker historie již běží. Vynechávám duplicitní plnění fronty.")
-            else:
-                # Fronta nyní obsahuje payload‑centrické body (ts + points[entity_id,value])
-                self._history_queue = final_queue
-                self._diag_queue_length = len(self._history_queue)
-
-                if self._ha_started and (self._history_task is None or self._history_task.done()):
-                    _LOGGER.debug(
-                        "Spouštím background worker pro doplnění mezer (velikost: %s)",
-                        self._diag_queue_length,
-                    )
-                    self._history_task = self.hass.async_create_task(self._history_worker())
-        else:
-            _LOGGER.debug(
-                "Všechna historická data z JSONu již v DB existují. Vynechávám spuštění workeru."
+        # --- 1) Seřazení podle interního klíče "datum" ---
+        try:
+            sorted_measurements = sorted(
+                history_norm,
+                key=lambda m: datetime.fromisoformat(m["datum"]),
             )
+        except Exception as err:
+            _LOGGER.error("PM-TRACE: HISTORY SORT ERROR: %r", err, exc_info=True)
+            return
 
-        # D. Uložení rolling statistik do station_metadata["sensor_stats"] (RAM)
-        if "sensor_stats" not in self.station_metadata:
-            self.station_metadata["sensor_stats"] = {}
+        # --- 2) Příprava fronty pro Recorder (struktura, kterou očekává _history_worker) ---
+        queue = []
 
-        for sid, meta in SENSOR_DEFINITIONS.items():
-            key_lower = meta["api_key"].lower()
-            internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
-            values = extracted_stats.get(internal_sid, [])
+        for m in sorted_measurements:
+            try:
+                ts = datetime.fromisoformat(m["datum"])
 
-            if not values:
-                continue
+                points: list[dict] = []
+                for sid, value in m.items():
+                    if sid == "datum":
+                        continue
 
-            if internal_sid == "vitr_smer":
-                # Kruhová matematika pro směr větru
-                sin_sum = 0.0
-                cos_sum = 0.0
-                for val in values:
-                    rad = math.radians(val)
-                    sin_sum += math.sin(rad)
-                    cos_sum += math.cos(rad)
+                    entity_id = f"sensor.{station_prefix}_{sid}"
+                    points.append(
+                        {
+                            "entity_id": entity_id,
+                            "value": value,
+                        }
+                    )
 
-                count = len(values)
-                avg_sin = sin_sum / count
-                avg_cos = cos_sum / count
-
-                avg_deg = math.degrees(math.atan2(avg_sin, avg_cos)) % 360.0
-                rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
-
-                if rounded:
-                    common_modes = Counter(rounded).most_common(1)
-                    mode_deg = common_modes[0][0] if common_modes else values[0]
-                else:
-                    mode_deg = values[0] if values else 0.0
-
-                r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
-                var_deg = (
-                    math.degrees(math.sqrt(-2.0 * math.log(r_vector)))
-                    if 0.001 < r_vector < 1.0
-                    else 0.0
+                queue.append(
+                    {
+                        "ts_utc": ts,
+                        "points": points,
+                    }
                 )
 
-                self.station_metadata["sensor_stats"][sid] = {
-                    "stats_avg": round(avg_deg, 1),
-                    "stats_mode": round(mode_deg, 1),
-                    "stats_var": round(min(var_deg, 180.0), 1),
-                }
-            else:
-                self.station_metadata["sensor_stats"][sid] = {
-                    "stats_min": round(min(values), 1),
-                    "stats_max": round(max(values), 1),
-                }
+            except Exception as err:
+                _LOGGER.error("PM-TRACE: HISTORY ITEM ERROR: %r", err, exc_info=True)
+                continue
 
-        return extracted_stats
+        self._history_queue.extend(queue)
+        self.history_queue_length = len(self._history_queue)
 
     # -------------------------------------------------------------------------
     # HISTORICKÝ BACKGROUND WORKER & ODLOŽENÝ START
