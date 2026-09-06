@@ -593,6 +593,23 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         current["srazky_intenzita"] = srazky_intenzita
 
+        # --- Výpočet stavu počasí (condition) ---
+        condition = "cloudy"
+
+        if current["srazky_intenzita"] and current["srazky_intenzita"] > 2:
+            condition = "pouring"
+        elif current["srazky_intenzita"] and current["srazky_intenzita"] > 0:
+            condition = "rainy"
+        elif current["slunecni_zareni"] and current["slunecni_zareni"] > 300:
+            condition = "sunny"
+        elif current["slunecni_zareni"] and current["slunecni_zareni"] > 100:
+            condition = "partlycloudy"
+        elif current["vitr_rychlost"] and current["vitr_rychlost"] > 10:
+            condition = "windy"
+
+current["condition"] = condition
+self.station_metadata["condition"] = condition
+
         # --- 4) Normalizace historie (API → interní klíče) + syntetická intenzita ---
         history = []
         prev_h = None
