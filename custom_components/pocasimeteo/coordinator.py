@@ -797,3 +797,21 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "current": current,
             "history": history,
         }
+        
+    def _to_float(self, value):
+        """Bezpečný převod na float."""
+        try:
+            if value in (None, "", " ", "N/A", "--"):
+                return None
+            return float(value)
+        except Exception:
+            return None
+
+    def _to_int(self, value):
+        """Bezpečný převod na int."""
+        try:
+            if value in (None, "", " ", "N/A", "--"):
+                return None
+            return int(float(value))
+        except Exception:
+            return None
