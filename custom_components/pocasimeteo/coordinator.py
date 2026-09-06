@@ -223,6 +223,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
             self._entity_id_map[api_key.lower()] = f"sensor.{station_prefix}_{internal_sid}"
 
+        # Registrace odloženého startu background workeru
+        self.register_delayed_startup()
+
     # -------------------------------------------------------------------------
     # ASYNCHRONNÍ WRAPPERY PRO EXECUTOR JOBY (VOLAJÍ EXTERNÍ FUNKCE)
     # -------------------------------------------------------------------------
@@ -281,7 +284,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             )
             self.update_interval = timedelta(minutes=update_interval_minutes)
 
+        # Fallback: pokud není žádná fronta pro historii, spočítáme statistiky přímo
+        if not self._history_queue and self.sensors_payload:
+            await self._update_recorder_statistics(self.sensors_payload)
+
         return self.sensors_payload
+
     # -------------------------------------------------------------------------
     # UNIFIKOVANÉ ZPRACOVÁNÍ DATASETU (LOGIKA V JEDNOM PRŮCHODU)
     # -------------------------------------------------------------------------
@@ -326,7 +334,11 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
 
         self._history_queue.extend(queue)
-        self.history_queue_length = len(self._history_queue)
+        self._diag_queue_length = len(self._history_queue)
+
+        # Pokud už HA běží a worker není aktivní, spustíme ho
+        if self._ha_started and (self._history_task is None or self._history_task.done()):
+            self._history_task = self.hass.async_create_task(self._history_worker())
 
     # -------------------------------------------------------------------------
     # HISTORICKÝ BACKGROUND WORKER & ODLOŽENÝ START
