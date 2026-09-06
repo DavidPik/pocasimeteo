@@ -249,13 +249,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         Stáhne JSON z API, normalizuje ho do payloadu a připraví historii pro Recorder.
         """
 
-        api_key = self.entry.data[CONF_API_KEY]
+        api_key = self.entry.data.get(CONF_API_KEY)
         api_url = f"{API_URL_BASE}?KlicApi={api_key}"
 
         session = aiohttp_client.async_get_clientsession(self.hass)
 
         try:
-            async with session.get(url, timeout=30) as resp:
+            async with session.get(api_url, timeout=30) as resp:
                 if resp.status != 200:
                     raise UpdateFailed(f"API returned HTTP {resp.status}")
                 data = await resp.json()
