@@ -607,8 +607,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         elif current["vitr_rychlost"] and current["vitr_rychlost"] > 10:
             condition = "windy"
 
-current["condition"] = condition
-self.station_metadata["condition"] = condition
+        current["condition"] = condition
+        self.station_metadata["condition"] = condition
 
         # --- 4) Normalizace historie (API → interní klíče) + syntetická intenzita ---
         history = []
