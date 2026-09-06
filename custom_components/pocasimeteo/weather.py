@@ -4,13 +4,6 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components.weather import WeatherEntity
-from homeassistant.const import (
-    UnitOfTemperature,
-    UnitOfPressure,
-    UnitOfSpeed,
-    UnitOfPrecipitationDepth,
-    UnitOfPrecipitationIntensity,
-)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -61,13 +54,16 @@ class PocasimeteoWeather(
         self.entity_id = f"weather.{station_prefix}"
         self._attr_name = entry.title
 
-        # WeatherEntity musí mít jednotky definované při inicializaci
-        self._attr_native_temperature_unit = UnitOfTemperature.CELSIUS
-        self._attr_native_pressure_unit = UnitOfPressure.HPA
-        self._attr_native_wind_speed_unit = UnitOfSpeed.KILOMETERS_PER_HOUR
-        self._attr_native_wind_gust_unit = UnitOfSpeed.KILOMETERS_PER_HOUR
-        self._attr_native_precipitation_unit = UnitOfPrecipitationDepth.MILLIMETERS
-        self._attr_native_precipitation_intensity_unit = UnitOfPrecipitationIntensity.MILLIMETERS_PER_HOUR
+        # ---------------------------------------------------------
+        # DŮLEŽITÉ: WeatherEntity musí mít jednotky definované při
+        # inicializaci, jinak Recorder uloží první stav s None.
+        # ---------------------------------------------------------
+        self._attr_native_temperature_unit = "°C"
+        self._attr_native_pressure_unit = "hPa"
+        self._attr_native_wind_speed_unit = "km/h"
+        self._attr_native_wind_gust_unit = "km/h"
+        self._attr_native_precipitation_unit = "mm"      # celkové srážky
+        self._attr_native_precipitation_intensity_unit = "mm/h"  # intenzita srážek
 
         self._attr_supported_features = 0
         self._attr_device_info = coordinator.station_metadata.get("device_info")
