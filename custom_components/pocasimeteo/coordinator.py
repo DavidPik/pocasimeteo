@@ -437,6 +437,37 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # DLOUHODOBÉ STATISTIKY Z RECORDERU (OPRAVENÁ RYCHLÁ VERZE)
     # -------------------------------------------------------------------------
 
+    def _query_history_values_sync(session_factory, entity_id: str, start_ts: float) -> list[float]:
+        """
+        Bezpečné synchronní načtení historie hodnot z Recorderu.
+        Vrací čistý seznam float hodnot za dané období.
+        Nepoužívá žádné legacy funkce ani ORM autoflush.
+        """
+        from sqlalchemy import select
+
+        with session_factory() as session:
+            rows = session.execute(
+                select(States.state)
+                .where(States.entity_id == entity_id)
+                .where(States.last_changed_ts >= start_ts)
+                .order_by(States.last_changed_ts.asc())
+            ).all()
+
+            values: list[float] = []
+
+            for r in rows:
+                raw = r[0]
+                if raw is None:
+                    continue
+                try:
+                    v = float(raw)
+                    if not math.isnan(v):
+                        values.append(v)
+                except (TypeError, ValueError):
+                    continue
+
+            return values
+
     async def _update_recorder_statistics(self, data: dict[str, dict]):
         """
         Načte historii ze SQL Recorderu a spočítá dlouhodobé statistiky.
@@ -461,15 +492,35 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         recorder = get_instance(self.hass)
         session_factory = recorder.get_session
 
+        # --- NOVÁ FUNKCE: bezpečné načtení historie bez _query_recorder_history_sync ---
+        def _query_history_values_sync(session_factory, entity_id, start_ts):
+            with session_factory() as session:
+                rows = session.execute(
+                    select(States.state)
+                    .where(States.entity_id == entity_id)
+                    .where(States.last_changed_ts >= start_ts)
+                    .order_by(States.last_changed_ts.asc())
+                ).all()
+
+                values = []
+                for r in rows:
+                    try:
+                        v = float(r[0])
+                        if not math.isnan(v):
+                            values.append(v)
+                    except (TypeError, ValueError):
+                        continue
+                return values
+
         # HLAVNÍ CYKLUS — iterujeme přes všechny senzory v sensors_payload
         for sid, payload in data.items():
 
             internal_sid = sid
             entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
-            # Načteme historii z Recorderu
+            # Načteme historii z Recorderu (nová verze)
             values = await recorder.async_add_executor_job(
-                _query_recorder_history_sync,
+                _query_history_values_sync,
                 session_factory,
                 entity_id,
                 start_timestamp,
