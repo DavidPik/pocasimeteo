@@ -711,12 +711,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         """
         Přijme celý raw JSON z API PočasíMeteo a:
         - extrahuje metadata, aktuální měření a historii,
-        - normalizuje hodnoty,
+        - normalizuje hodnoty do interních klíčů,
         - vytvoří syntetický senzor srazky_intenzita (current + historie),
         - naplní sensors_payload (pro sensor.py),
         - naplní station_metadata (pro weather.py),
         - naplní entity_id mapu,
-        - vrátí kompletní normalizovaný dataset indexovaný interními klíči.
+        - vrátí kompletní normalizovaný dataset.
         """
 
         # --- 1) Validace formátu API ---
@@ -745,9 +745,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             "webcamera_url": metadata_raw.get("Webkamera"),
         }
 
-       # --- Výpočet syntetického senzoru srazky_intenzita ---
+        # --- 3) Výpočet syntetického senzoru srazky_intenzita (current) ---
         srazky_intenzita = 0.0
-
         if len(history_raw) >= 1 and current_raw.get("SrazkyDen") is not None:
             try:
                 rain_now = float(current_raw.get("SrazkyDen", 0))
@@ -767,10 +766,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
 
         current["srazky_intenzita"] = srazky_intenzita
 
-        # --- 3) Normalizace historie (API → interní klíče) ---
+        # --- 4) Normalizace historie (API → interní klíče) + syntetická intenzita ---
         history = []
+        prev_h = None
+
         for item in history_raw:
-            history.append({
+            h = {
                 "datum": item.get("Datum"),
                 "teplota_vnejsi": self._to_float(item.get("TeplotaVnejsi")),
                 "tlak_relativni": self._to_float(item.get("TlakRel")),
@@ -780,29 +781,28 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 "vitr_narazy": self._to_float(item.get("VitrNarazy")),
                 "vitr_smer": self._to_int(item.get("VitrSmer")),
                 "srazky_den": self._to_float(item.get("SrazkyDen")),
-                "srazky_intenzita": None,
-            })
+                "srazky_intenzita": 0.0,
+            }
 
-            # Výpočet intenzity pro historický bod (pokud existuje předchozí)
-            if len(history) >= 1:
+            # Výpočet intenzity pro historický bod
+            if prev_h is not None:
                 try:
                     rain_now = h["srazky_den"]
-                    rain_prev = history[-1]["srazky_den"]
+                    rain_prev = prev_h["srazky_den"]
 
                     ts_now = dt_util.parse_datetime(h["datum"].replace("Z", ""))
-                    ts_prev = dt_util.parse_datetime(history[-1]["datum"].replace("Z", ""))
+                    ts_prev = dt_util.parse_datetime(prev_h["datum"].replace("Z", ""))
 
                     delta_rain = rain_now - rain_prev
                     delta_hours = (ts_now - ts_prev).total_seconds() / 3600.0
 
                     if delta_rain > 0 and delta_hours > 0:
                         h["srazky_intenzita"] = round(delta_rain / delta_hours, 2)
-                    else:
-                        h["srazky_intenzita"] = 0.0
                 except Exception:
                     h["srazky_intenzita"] = 0.0
 
             history.append(h)
+            prev_h = h
 
         # --- 5) Naplnění sensors_payload (pro sensor.py) ---
         sensors_payload = {}
@@ -824,7 +824,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 },
             }
 
-            # Naplnění entity_id mapy
             self._entity_id_map[api_key] = f"sensor.{station_prefix}_{internal_sid}"
 
         # --- 6) Přidání syntetického senzoru do sensors_payload ---
@@ -852,7 +851,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         else:
             self.station_metadata["api_timestamp"] = None
 
-        # --- 6) Vrácení kompletního normalizovaného datasetu ---
+        # --- 8) Vrácení kompletního normalizovaného datasetu ---
         return {
             "metadata": metadata_raw,
             "current": current,
