@@ -326,24 +326,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 _LOGGER.error("Chyba při konverzi času u bodu %s: %s", ts_raw, e)
                 continue
 
-            # Výpočet intenzity srážek (syntetický senzor intenzita_srazek)
-            try:
-                rain_total = float(m.get("SrazkyDen", 0))
-            except Exception:
-                rain_total = 0.0
-
-            if previous_rain is not None:
-                delta_rain = rain_total - previous_rain
-                delta_time = (ts_utc_naive - previous_ts).total_seconds() / 3600.0
-                intensity = round(delta_rain / delta_time, 2) if (delta_rain > 0 and delta_time > 0) else 0.0
-            else:
-                intensity = 0.0
-
-            previous_rain = rain_total
-            previous_ts = ts_utc_naive
-
-            # Uložíme poslední intenzitu pro aktuální běh
-            self._latest_rain_intensity = intensity
+            # intenzita srážek se nyní počítá v _normalize_data()
+            intensity = m.get("srazky_intenzita", 0.0)
 
             # Sběr dat pro rolling statistiky – pracujeme už jen s interními sid
             for sid, meta in SENSOR_DEFINITIONS.items():
@@ -728,13 +712,14 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         Přijme celý raw JSON z API PočasíMeteo a:
         - extrahuje metadata, aktuální měření a historii,
         - normalizuje hodnoty,
+        - vytvoří syntetický senzor srazky_intenzita (current + historie),
         - naplní sensors_payload (pro sensor.py),
         - naplní station_metadata (pro weather.py),
-        - připraví entity_id mapu,
-        - vrátí normalizovaný payload.
+        - naplní entity_id mapu,
+        - vrátí kompletní normalizovaný dataset indexovaný interními klíči.
         """
 
-        # --- 1) Ověření formátu API ---
+        # --- 1) Validace formátu API ---
         if not isinstance(raw_json, list) or len(raw_json) < 2:
             raise UpdateFailed("Invalid API response format: expected list with metadata + current + history")
 
@@ -742,53 +727,97 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         current_raw = raw_json[1] or {}
         history_raw = raw_json[2:] if len(raw_json) > 2 else []
 
-        # --- 2) Normalizace aktuálního měření ---
+        # --- 2) Normalizace aktuálního měření (API → interní klíče) ---
         current = {
-            "Datum": current_raw.get("Datum"),
-            "TeplotaVnejsi": self._to_float(current_raw.get("TeplotaVnejsi")),
-            "TeplotaVnitrni": self._to_float(current_raw.get("TeplotaVnitrni")),
-            "TlakRel": self._to_float(current_raw.get("TlakRel")),
-            "VlhkostVnejsi": self._to_float(current_raw.get("VlhkostVnejsi")),
-            "VlhkostVnitrni": self._to_float(current_raw.get("VlhkostVnitrni")),
-            "SlunZareni": self._to_float(current_raw.get("SlunZareni")),
-            "UVindex": self._to_float(current_raw.get("UVindex")),
-            "Vitr": self._to_float(current_raw.get("Vitr")),
-            "VitrNarazy": self._to_float(current_raw.get("VitrNarazy")),
-            "VitrSmer": self._to_int(current_raw.get("VitrSmer")),
-            "SrazkyDen": self._to_float(current_raw.get("SrazkyDen")),
-            "LokalitaStanice": metadata_raw.get("LokalitaStanice"),
-            "Webkamera": metadata_raw.get("Webkamera"),
+            "datum": current_raw.get("Datum"),
+            "teplota_vnejsi": self._to_float(current_raw.get("TeplotaVnejsi")),
+            "teplota_vnitrni": self._to_float(current_raw.get("TeplotaVnitrni")),
+            "tlak_relativni": self._to_float(current_raw.get("TlakRel")),
+            "vlhkost_vnejsi": self._to_float(current_raw.get("VlhkostVnejsi")),
+            "vlhkost_vnitrni": self._to_float(current_raw.get("VlhkostVnitrni")),
+            "slunecni_zareni": self._to_float(current_raw.get("SlunZareni")),
+            "uv_index": self._to_float(current_raw.get("UVindex")),
+            "vitr_rychlost": self._to_float(current_raw.get("Vitr")),
+            "vitr_narazy": self._to_float(current_raw.get("VitrNarazy")),
+            "vitr_smer": self._to_int(current_raw.get("VitrSmer")),
+            "srazky_den": self._to_float(current_raw.get("SrazkyDen")),
+            "lokalita_stanice": metadata_raw.get("LokalitaStanice"),
+            "webcamera_url": metadata_raw.get("Webkamera"),
         }
 
-        # --- 3) Normalizace historie ---
+       # --- Výpočet syntetického senzoru srazky_intenzita ---
+        srazky_intenzita = 0.0
+
+        if len(history_raw) >= 1 and current_raw.get("SrazkyDen") is not None:
+            try:
+                rain_now = float(current_raw.get("SrazkyDen", 0))
+                prev = history_raw[0]
+                rain_prev = float(prev.get("SrazkyDen", 0))
+
+                ts_now = dt_util.parse_datetime(current_raw["Datum"].replace("Z", ""))
+                ts_prev = dt_util.parse_datetime(prev["Datum"].replace("Z", ""))
+
+                delta_rain = rain_now - rain_prev
+                delta_hours = (ts_now - ts_prev).total_seconds() / 3600.0
+
+                if delta_rain > 0 and delta_hours > 0:
+                    srazky_intenzita = round(delta_rain / delta_hours, 2)
+            except Exception:
+                srazky_intenzita = 0.0
+
+        current["srazky_intenzita"] = srazky_intenzita
+
+        # --- 3) Normalizace historie (API → interní klíče) ---
         history = []
         for item in history_raw:
             history.append({
-                "Datum": item.get("Datum"),
-                "TeplotaVnejsi": self._to_float(item.get("TeplotaVnejsi")),
-                "TlakRel": self._to_float(item.get("TlakRel")),
-                "VlhkostVnejsi": self._to_float(item.get("VlhkostVnejsi")),
-                "SlunZareni": self._to_float(item.get("SlunZareni")),
-                "Vitr": self._to_float(item.get("Vitr")),
-                "VitrNarazy": self._to_float(item.get("VitrNarazy")),
-                "VitrSmer": self._to_int(item.get("VitrSmer")),
-                "SrazkyDen": self._to_float(item.get("SrazkyDen")),
+                "datum": item.get("Datum"),
+                "teplota_vnejsi": self._to_float(item.get("TeplotaVnejsi")),
+                "tlak_relativni": self._to_float(item.get("TlakRel")),
+                "vlhkost_vnejsi": self._to_float(item.get("VlhkostVnejsi")),
+                "slunecni_zareni": self._to_float(item.get("SlunZareni")),
+                "vitr_rychlost": self._to_float(item.get("Vitr")),
+                "vitr_narazy": self._to_float(item.get("VitrNarazy")),
+                "vitr_smer": self._to_int(item.get("VitrSmer")),
+                "srazky_den": self._to_float(item.get("SrazkyDen")),
+                "srazky_intenzita": None,
             })
 
-        # --- 4) Naplnění sensors_payload (pro sensor.py) ---
+            # Výpočet intenzity pro historický bod (pokud existuje předchozí)
+            if len(history) >= 1:
+                try:
+                    rain_now = h["srazky_den"]
+                    rain_prev = history[-1]["srazky_den"]
+
+                    ts_now = dt_util.parse_datetime(h["datum"].replace("Z", ""))
+                    ts_prev = dt_util.parse_datetime(history[-1]["datum"].replace("Z", ""))
+
+                    delta_rain = rain_now - rain_prev
+                    delta_hours = (ts_now - ts_prev).total_seconds() / 3600.0
+
+                    if delta_rain > 0 and delta_hours > 0:
+                        h["srazky_intenzita"] = round(delta_rain / delta_hours, 2)
+                    else:
+                        h["srazky_intenzita"] = 0.0
+                except Exception:
+                    h["srazky_intenzita"] = 0.0
+
+            history.append(h)
+
+        # --- 5) Naplnění sensors_payload (pro sensor.py) ---
         sensors_payload = {}
+        station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
 
         for sid, meta in SENSOR_DEFINITIONS.items():
-            api_key = meta["api_key"]
-            key_lower = api_key.lower()
-            internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
+            api_key = meta["api_key"].lower()
+            internal_sid = API_TO_INTERNAL_MAPPING.get(api_key, api_key)
 
-            value = current.get(api_key) if api_key in current else current.get(internal_sid)
+            value = current.get(internal_sid)
 
             sensors_payload[internal_sid] = {
                 "value": value,
                 "attributes": {
-                    "timestamp": current.get("Datum"),
+                    "timestamp": current.get("datum"),
                     "vitr_smer_avg": None,
                     "vitr_smer_mode": None,
                     "vitr_smer_var": None,
@@ -796,15 +825,23 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             }
 
             # Naplnění entity_id mapy
-            station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
-            self._entity_id_map[api_key.lower()] = f"sensor.{station_prefix}_{internal_sid}"
+            self._entity_id_map[api_key] = f"sensor.{station_prefix}_{internal_sid}"
 
-        # --- 5) Naplnění station_metadata (pro weather.py) ---
-        self.station_metadata["lokalita_stanice"] = current.get("LokalitaStanice")
-        self.station_metadata["srazky_den"] = current.get("SrazkyDen", 0)
-        self.station_metadata["webcamera_url"] = current.get("Webkamera")
+        # --- 6) Přidání syntetického senzoru do sensors_payload ---
+        sensors_payload["srazky_intenzita"] = {
+            "value": current["srazky_intenzita"],
+            "attributes": {
+                "timestamp": current.get("datum"),
+            },
+        }
+        self._entity_id_map["srazky_intenzita"] = f"sensor.{station_prefix}_srazky_intenzita"
 
-        api_ts_raw = current.get("Datum")
+        # --- 7) Naplnění station_metadata (pro weather.py) ---
+        self.station_metadata["lokalita_stanice"] = current.get("lokalita_stanice")
+        self.station_metadata["srazky_den"] = current.get("srazky_den", 0)
+        self.station_metadata["webcamera_url"] = current.get("webcamera_url")
+
+        api_ts_raw = current.get("datum")
         if api_ts_raw:
             try:
                 self.station_metadata["api_timestamp"] = dt_util.parse_datetime(
