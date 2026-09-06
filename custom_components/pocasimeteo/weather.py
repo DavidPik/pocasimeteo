@@ -48,14 +48,14 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
     @property
     def state(self) -> str | None:
         """Vrací aktuální stav počasí převedený z weather entity."""
-        return self.coordinator.sensors_payload.get("weather", {}).get("value", "cloudy")
+        return self.coordinator.station_metadata.get("condition", "cloudy")
 
     @property
     def native_temperature(self) -> float | None:
         """Vrací aktuální vnější teplotu."""
         sensor = self.coordinator.sensors_payload.get("teplota_vnejsi")
         return float(sensor["value"]) if sensor and sensor.get("value") is not None else None
-
+        
     @property
     def native_temperature_unit(self) -> str:
         """Vrací jednotku teploty."""
@@ -112,7 +112,7 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         Generuje dvě samostatné struktury: 'sensors' (konfigurace a barvy dlaždic) 
         a 'sensor_stats' (čistá Key-Value mapa analytických výsledků z DB).
         """
-        station_prefix = self.coordinator.entry.title.lower().strip().replace(" ", "_")
+        station_prefix = self._entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
         stats_dict = self.coordinator.station_metadata.get("sensor_stats", {})
 
         # 1. STRUKTURA: Statická konfigurace vzhledu, barev a řazení grafů
