@@ -77,7 +77,6 @@ def _query_existing_timestamps_sync(session_factory, sample_entity, processed_ti
         ).all()
     return {float(r[0]) for r in rows if r and r[0] is not None}
 
-
 def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
     """
     Optimalizovaný a bezpečný zápis historie do Recorderu.
@@ -86,6 +85,7 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
     - SELECT je vždy v no_autoflush
     - INSERT probíhá v samostatných transakcích
     - retry/backoff řeší krátkodobé zámky SQLite
+    - MultipleResultsFound je ošetřeno – bereme první řádek
     """
 
     session = session_factory()
@@ -107,22 +107,25 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
 
         for row in existing_meta:
             meta_obj = row[0]
-            meta_cache[meta_obj.entity_id] = meta_obj.metadata_id
+            # Pokud existuje více řádků, bereme první – Recorder to tak dělá také
+            if meta_obj.entity_id not in meta_cache:
+                meta_cache[meta_obj.entity_id] = meta_obj.metadata_id
 
     # ---------------------------------------------------------
     # 3) Přednačtení sdíleného prázdného JSON atributu
     # ---------------------------------------------------------
     with session.no_autoflush:
-        attr_row = session.execute(
+        attr_rows = session.execute(
             select(StateAttributes).where(StateAttributes.shared_attrs == "{}")
-        ).scalar_one_or_none()
+        ).all()
 
-    if attr_row is None:
+    if attr_rows:
+        attr_id = attr_rows[0][0].attributes_id
+    else:
         with session.begin():
             attr_row = StateAttributes(shared_attrs="{}")
             session.add(attr_row)
-
-    attr_id = attr_row.attributes_id
+        attr_id = attr_row.attributes_id
 
     # ---------------------------------------------------------
     # 4) Zápis jednotlivých bodů
@@ -135,10 +138,8 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
         if not ts or not entity_id:
             continue
 
-        # Převod času na float timestamp
         utc_timestamp = ts.replace(tzinfo=None).timestamp()
 
-        # Konverze hodnoty na float nebo string
         if value in (None, "", " ", "N/A", "--"):
             continue
 
@@ -156,11 +157,14 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
         metadata_id = meta_cache.get(entity_id)
         if metadata_id is None:
             with session.no_autoflush:
-                meta_obj = session.execute(
+                meta_rows = session.execute(
                     select(StatesMeta).where(StatesMeta.entity_id == entity_id)
-                ).scalar_one_or_none()
+                ).all()
 
-            if meta_obj is None:
+            if meta_rows:
+                # Pokud existuje více řádků, bereme první
+                meta_obj = meta_rows[0][0]
+            else:
                 with session.begin():
                     meta_obj = StatesMeta(entity_id=entity_id)
                     session.add(meta_obj)
@@ -186,10 +190,10 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
                         last_updated=ts,
                     )
                     session.add(row)
-                break  # úspěch
+                break
             except OperationalError:
                 retry += 1
-                time.sleep(0.15 * retry)  # exponenciální backoff
+                time.sleep(0.15 * retry)
                 continue
 
         if retry == 5:
