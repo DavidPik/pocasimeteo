@@ -61,7 +61,17 @@ class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], Sen
             meta = get_dynamic_sensor_meta(sensor_id)
 
         self._attr_name = meta.get("name", sensor_id)
-        self._attr_native_unit_of_measurement = meta.get("unit")
+        # Jednotka musí být vždy stabilní – nikdy nesmí být None, pokud není None v definici
+        unit = meta.get("unit")
+
+        # UV index má jednotku None správně
+        if unit is None and self._internal_sid != "uv_index":
+            _LOGGER.warning(
+                "Senzor %s má neočekávanou jednotku None – nastavuje se podle definice",
+                self._internal_sid,
+            )
+
+        self._attr_native_unit_of_measurement = unit
         self._attr_icon = meta.get("icon")
         self._attr_device_class = meta.get("device_class")
         self._attr_state_class = meta.get("state_class")
