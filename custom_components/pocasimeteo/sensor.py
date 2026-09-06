@@ -49,6 +49,7 @@ class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], Sen
 
         # Odvození interního ID entity (snake_case) přímo z entry
         internal_sid = API_TO_INTERNAL_MAPPING.get(sensor_id.lower(), sensor_id.lower())
+        self._internal_sid = internal_sid 
         self._attr_unique_id = f"{entry.entry_id}_{internal_sid}"
         self.entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
@@ -70,28 +71,20 @@ class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], Sen
 
     @property
     def native_value(self) -> float | str | None:
-        """Vrací aktuální syrovou hodnotu měření z paměti koordinátoru."""
-        return self.coordinator.sensors_payload.get(self._sensor_id, {}).get("value")
+        return self.coordinator.sensors_payload.get(self._internal_sid, {}).get("value")
 
     @property
     def extra_state_attributes(self) -> dict[str, any] | None:
-        """
-        Vrací rozšířené atributy senzoru včetně rolling statistik z paměti RAM.
-        Základní lineární čidla dostávají min/max, čidlo směru větru průměr, mod a rozptyl.
-        """
-        payload = self.coordinator.sensors_payload.get(self._sensor_id, {})
+        payload = self.coordinator.sensors_payload.get(self._internal_sid, {})
         attributes = payload.get("attributes", {})
-        
-        # Základní slovník s časovou značkou, která je vyžadována pro správný chod
+
         attrs = {
             "timestamp": attributes.get("timestamp")
         }
 
-        # Určíme vnitřní ID veličiny (snake_case) pro přesné větvení geometrií
-        internal_sid = API_TO_INTERNAL_MAPPING.get(self._sensor_id.lower(), self._sensor_id.lower())
+        internal_sid = self._internal_sid  # už ho máš, nemusíš znovu mapovat
 
         if internal_sid == "vitr_smer":
-            # Pro kruhový graf směru větru vytáhneme rolling statistiky z aktuálního API tikru
             if "vitr_smer_avg" in attributes:
                 attrs["vitr_smer_avg"] = attributes["vitr_smer_avg"]
             if "vitr_smer_mode" in attributes:
@@ -99,7 +92,6 @@ class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], Sen
             if "vitr_smer_var" in attributes:
                 attrs["vitr_smer_var"] = attributes["vitr_smer_var"]
         else:
-            # Pro všechny standardní lineární senzory (teploty, tlak, slunce atd.) vytáhneme rolling min/max
             if "min" in attributes:
                 attrs["min"] = attributes["min"]
             if "max" in attributes:
