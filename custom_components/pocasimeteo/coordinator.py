@@ -129,11 +129,15 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
 
             # Attributes (StateAttributes) – sdílený prázdný JSON
             if attr_id is None:
-                attr_row = session.execute(
+                attr_rows = session.execute(
                     select(StateAttributes).where(StateAttributes.shared_attrs == "{}")
-                ).scalar_one_or_none()
+                ).all()
 
-                if not attr_row:
+                if attr_rows:
+                    # vezmeme první existující řádek
+                    attr_row = attr_rows[0][0]
+                else:
+                    # vytvoříme nový sdílený prázdný JSON
                     attr_row = StateAttributes(shared_attrs="{}")
                     session.add(attr_row)
                     session.flush()
