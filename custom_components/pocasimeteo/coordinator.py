@@ -470,81 +470,48 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         Načte historii ze SQL Recorderu a spočítá dlouhodobé statistiky.
         Výsledky ukládá exkluzivně do extended slovníku ve self.station_metadata["sensor_stats"].
         """
-        now_utc = dt_util.utcnow()
-        start_ts_utc = now_utc - timedelta(hours=self._statistics_interval)
-        start_timestamp = start_ts_utc.timestamp()
+        now_local = dt_util.now()  # CEST
+        start_local = now_local - timedelta(hours=self._statistics_interval)
+        start_timestamp = start_local.timestamp()
 
         station_prefix = self.entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
 
         if "sensor_stats" not in self.station_metadata:
             self.station_metadata["sensor_stats"] = {}
 
-        for sid, payload in data.items():
-            internal_sid = sid
-            entity_id = f"sensor.{station_prefix}_{internal_sid}"
+        if internal_sid == "vitr_smer":
+            sin_sum = 0.0
+            cos_sum = 0.0
+            for val in values:
+                rad = math.radians(val)
+                sin_sum += math.sin(rad)
+                cos_sum += math.cos(rad)
 
-            recorder = get_instance(self.hass)
-            session_factory = recorder.get_session
+            count = len(values)
+            avg_sin = sin_sum / count
+            avg_cos = cos_sum / count
 
-            values = await recorder.async_add_executor_job(
-                _query_recorder_history_sync,
-                session_factory,
-                entity_id,
-                start_timestamp,
+            avg_deg = math.degrees(math.atan2(avg_sin, avg_cos)) % 360.0
+
+            rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
+            if rounded:
+                common_modes = Counter(rounded).most_common(1)
+                mode_deg = common_modes[0][0]
+            else:
+                mode_deg = values[0]
+
+            r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
+            var_deg = (
+                math.degrees(math.sqrt(-2.0 * math.log(r_vector)))
+                if 0.001 < r_vector < 1.0
+                else 0.0
             )
 
-            if len(values) < 10:
-                if internal_sid == "vitr_smer":
-                    self.station_metadata["sensor_stats"][sid] = {
-                        "stats_avg": payload["attributes"].get("vitr_smer_avg", payload["value"]),
-                        "stats_mode": payload["attributes"].get("vitr_smer_mode", payload["value"]),
-                        "stats_var": payload["attributes"].get("vitr_smer_var", 0.0),
-                    }
-                else:
-                    self.station_metadata["sensor_stats"][sid] = {
-                        "stats_min": payload["value"],
-                        "stats_max": payload["value"],
-                    }
-                continue
-
-            if internal_sid == "vitr_smer":
-                sin_sum = 0.0
-                cos_sum = 0.0
-                for val in values:
-                    rad = math.radians(val)
-                    sin_sum += math.sin(rad)
-                    cos_sum += math.cos(rad)
-
-                count = len(values)
-                avg_sin = sin_sum / count
-                avg_cos = cos_sum / count
-
-                avg_deg = math.degrees(math.atan2(avg_sin, avg_cos)) % 360.0
-                rounded = [round(a / 22.5) * 22.5 % 360 for a in values]
-
-                if rounded:
-                    common_modes = Counter(rounded).most_common(1)
-                    mode_deg = common_modes[0][0] if common_modes else values[0]
-                else:
-                    mode_deg = values[0] if values else 0.0
-
-                r_vector = math.sqrt(avg_sin**2 + avg_cos**2)
-                var_deg = (
-                    math.degrees(math.sqrt(-2.0 * math.log(r_vector)))
-                    if 0.001 < r_vector < 1.0
-                    else 0.0
-                )
-
-                self.station_metadata["sensor_stats"][sid] = {
-                    "stats_avg": round(avg_deg, 1),
-                    "stats_mode": round(mode_deg, 1),
-                    "stats_var": round(min(var_deg, 180.0), 1),
-                }
-            else:
-                self.station_metadata["sensor_stats"][sid] = {
-                    "stats_min": round(min(values), 1),
-                    "stats_max": round(max(values), 1),
-                }
+            self.station_metadata["sensor_stats"][sid] = {
+                "stats_avg": round(avg_deg, 1),
+                "stats_mode": round(mode_deg, 1),
+                "stats_var": round(min(var_deg, 180.0), 1),
+            }
 
     # -------------------------------------------------------------------------
     # TRANSFORMAČNÍ A NORMALIZAČNÍ METODY PRO STRUKTURY HA
@@ -634,9 +601,12 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             h = {
                 "datum": item.get("Datum"),
                 "teplota_vnejsi": self._to_float(item.get("TeplotaVnejsi")),
+                "teplota_vnitrni": self._to_float(item.get("TeplotaVnitrni")),      # NOVÉ
                 "tlak_relativni": self._to_float(item.get("TlakRel")),
                 "vlhkost_vnejsi": self._to_float(item.get("VlhkostVnejsi")),
+                "vlhkost_vnitrni": self._to_float(item.get("VlhkostVnitrni")),      # NOVÉ
                 "slunecni_zareni": self._to_float(item.get("SlunZareni")),
+                "uv_index": self._to_float(item.get("UVindex")),                    # NOVÉ
                 "vitr_rychlost": self._to_float(item.get("Vitr")),
                 "vitr_narazy": self._to_float(item.get("VitrNarazy")),
                 "vitr_smer": self._to_int(item.get("VitrSmer")),
