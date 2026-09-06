@@ -79,6 +79,18 @@ class PocasimeteoWeather(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], We
         return "hPa"
 
     @property
+    def native_precipitation_intensity(self) -> float | None:
+        sensor = self.coordinator.sensors_payload.get("srazky_intenzita")
+        if sensor and sensor.get("value") is not None:
+            return float(sensor["value"])
+        return None
+
+    @property
+    def precipitation_unit(self) -> str:
+        """Vrací jednotku intenzity srážek podle HA."""
+        return "mm/h"
+
+    @property
     def native_wind_speed(self) -> float | None:
         """Vrací průměrnou rychlost větru přepočtenou na km/h dle standardu HA weather entit."""
         sensor = self.coordinator.sensors_payload.get("vitr_rychlost")
