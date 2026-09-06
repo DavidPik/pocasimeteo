@@ -18,6 +18,7 @@ from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.db_schema import States, StatesMeta, StateAttributes
 from homeassistant.util import dt as dt_util
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from .const import (
     DOMAIN,
