@@ -87,7 +87,7 @@ class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], Sen
         # UV index má jednotku None správně
         elif internal_sid == "uv_index":
             unit = None
-            self._attr_device_class = SensorDeviceClass.UV_INDEX
+            self._attr_device_class = None
             self._attr_state_class = SensorStateClass.MEASUREMENT
 
         else:
