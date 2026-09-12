@@ -114,12 +114,13 @@ class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], Sen
         }
 
         if self._internal_sid == "vitr_smer":
-            if "vitr_smer_avg" in attributes:
-                attrs["vitr_smer_avg"] = attributes["vitr_smer_avg"]
-            if "vitr_smer_mode" in attributes:
-                attrs["vitr_smer_mode"] = attributes["vitr_smer_mode"]
-            if "vitr_smer_var" in attributes:
-                attrs["vitr_smer_var"] = attributes["vitr_smer_var"]
+            stats = self.coordinator.station_metadata.get("sensor_stats", {}).get("vitr_smer", {})
+            if "stats_avg" in attributes:
+                attrs["vitr_smer_avg"] = stats["stats_avg"]
+            if "stats_mode" in attributes:
+                attrs["vitr_smer_mode"] = attributes["stats_mode"]
+            if "stats_var" in attributes:
+                attrs["vitr_smer_var"] = attributes["stats_var"]
         else:
             if "min" in attributes:
                 attrs["min"] = attributes["min"]
