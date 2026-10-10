@@ -51,6 +51,12 @@ ATTR_DAILY_RAIN = "srazky_den"
 # Frontend payloady publikované WEATHER entitou
 ATTR_GRAPH_CONFIGURATION = "graph_configuration"
 ATTR_GRAPH_DATA = "graph_data"
+ATTR_BACKEND_HISTORY = "backend_history"
+
+# Atribut historie z vlastní databáze je určený pro frontend a nesmí
+# obsahovat více než poslední měsíc měření.
+BACKEND_HISTORY_VERSION = 1
+BACKEND_HISTORY_MAX_HOURS = 720
 
 # Diagnostika databáze publikovaná WEATHER entitou
 ATTR_DATABASE_DIAGNOSTICS = "database_diagnostics"
