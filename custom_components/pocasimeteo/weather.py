@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.weather import WeatherEntity
 from homeassistant.core import HomeAssistant
@@ -14,6 +15,7 @@ from .const import (
     API_TO_INTERNAL_MAPPING,
     CONF_SENSORS,
     CONF_STATION,
+    ATTR_BACKEND_HISTORY,
 )
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
@@ -143,7 +145,7 @@ class PocasimeteoWeather(
     # -------------------------------------------------------------------------
 
     @property
-    def extra_state_attributes(self) -> dict[str, any] | None:
+    def extra_state_attributes(self) -> dict[str, Any] | None:
         station_prefix = (
             self._entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
         )
@@ -188,7 +190,7 @@ class PocasimeteoWeather(
 
         sensors_meta.sort(key=lambda x: x["order"])
 
-        return {
+        attributes = {
             "srazky_den": self.coordinator.station_metadata.get("srazky_den", 0),
             "lokalita_stanice": self.coordinator.station_metadata.get(
                 "lokalita_stanice"
@@ -213,3 +215,7 @@ class PocasimeteoWeather(
             ),
             "history_last_batch_size": self.coordinator._diag_last_batch_size,
         }
+        backend_history = self.coordinator.station_metadata.get("backend_history")
+        if backend_history is not None:
+            attributes[ATTR_BACKEND_HISTORY] = backend_history
+        return attributes
