@@ -22,6 +22,7 @@ from sqlalchemy.exc import OperationalError
 
 from .const import (
     DOMAIN,
+    DB_FILENAME,
     API_URL_BASE,
     CONF_API_KEY,
     CONF_UPDATE_INTERVAL,
@@ -31,9 +32,19 @@ from .const import (
     SENSOR_DEFINITIONS,
     DEFAULT_SENSOR_OPTIONS,
     DEFAULT_STATISTICS_INTERVAL,
+    ALLOWED_STATISTICS_INTERVALS,
+    STATISTICS_TYPE_LINEAR,
+    STATISTICS_TYPE_DIRECTIONAL,
+    STATISTICS_TYPE_NONE,
+    LINEAR_STATISTICS,
+    DIRECTIONAL_STATISTICS,
+    BACKEND_HISTORY_VERSION,
+    BACKEND_HISTORY_MAX_HOURS,
+    ATTR_BACKEND_HISTORY,
     get_dynamic_sensor_meta,
     API_TO_INTERNAL_MAPPING,
 )
+from .database import PocasimeteoDatabase
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -266,8 +277,216 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # i když fronta není prázdná (budou založené na tom, co už v DB je)
         if self.sensors_payload:
             await self._update_recorder_statistics(self.sensors_payload)
-    
+
+        # Nová databázová větev zpracuje už normalizovaný výsledek stejného
+        # API volání. Je oddělená od stávající Recorder větve a její chyba
+        # nesmí zneplatnit aktuální data ani výsledek původního zpracování.
+        try:
+            await self._async_store_normalized_history(normalized)
+            await self._async_refresh_database_history(normalized)
+        except Exception:
+            _LOGGER.exception("Nepodařilo se aktualizovat historii z vlastní databáze")
+
         return self.sensors_payload
+
+    async def _async_store_normalized_history(self, normalized: dict) -> None:
+        """Uloží do vlastní DB data z již normalizované odpovědi API."""
+        sensor_metadata, measurements = self._build_database_dataset(normalized)
+        if not measurements:
+            return
+
+        database = getattr(self, "_pocasimeteo_database", None)
+        if database is None:
+            database = PocasimeteoDatabase(
+                self.hass,
+                domain=DOMAIN,
+                filename=DB_FILENAME,
+            )
+            self._pocasimeteo_database = database
+
+        await database.async_store_dataset(
+            station_id=self.entry.entry_id,
+            station_name=self.entry.title,
+            sensor_metadata=sensor_metadata,
+            measurements=measurements,
+        )
+
+    async def _async_refresh_database_history(self, normalized: dict) -> None:
+        """Načte měsíční historii a statistiky z vlastní DB pro weather entitu."""
+        self.station_metadata.pop(ATTR_BACKEND_HISTORY, None)
+        latest_timestamp = normalized.get("current", {}).get("datum")
+        if not latest_timestamp:
+            self.station_metadata.pop(ATTR_BACKEND_HISTORY, None)
+            return
+
+        latest = datetime.fromisoformat(str(latest_timestamp).replace("Z", "+00:00"))
+        history_start = latest - timedelta(hours=BACKEND_HISTORY_MAX_HOURS)
+        try:
+            statistics_hours = int(self._statistics_interval)
+        except (TypeError, ValueError):
+            statistics_hours = DEFAULT_STATISTICS_INTERVAL
+        if statistics_hours not in ALLOWED_STATISTICS_INTERVALS:
+            statistics_hours = DEFAULT_STATISTICS_INTERVAL
+        statistics_start = latest - timedelta(hours=statistics_hours)
+
+        database = getattr(self, "_pocasimeteo_database", None)
+        if database is None:
+            return
+
+        sensor_history: dict[str, dict] = {}
+        for sensor_id in sorted(normalized.get("sensors", {})):
+            metadata = SENSOR_DEFINITIONS.get(sensor_id)
+            if metadata is None:
+                metadata = get_dynamic_sensor_meta(sensor_id)
+            if not metadata.get("history_enabled", True):
+                continue
+
+            rows = await database.async_get_sensor_history(
+                self.entry.entry_id,
+                sensor_id,
+                history_start.isoformat(),
+                latest.isoformat(),
+            )
+            history = [
+                {"timestamp": timestamp, "value": value}
+                for timestamp, value in rows
+            ]
+            statistic_values = []
+            for timestamp, value in rows:
+                try:
+                    measured_at = datetime.fromisoformat(
+                        timestamp.replace("Z", "+00:00")
+                    )
+                    if measured_at >= statistics_start:
+                        statistic_values.append(value)
+                except (TypeError, ValueError):
+                    continue
+
+            sensor_history[sensor_id] = {
+                "unit": metadata.get("unit"),
+                "history": history,
+                "statistics": self._calculate_database_statistics(
+                    sensor_id, statistic_values
+                ),
+            }
+
+        self.station_metadata[ATTR_BACKEND_HISTORY] = {
+            "version": BACKEND_HISTORY_VERSION,
+            "period_hours": BACKEND_HISTORY_MAX_HOURS,
+            "statistics_interval_hours": statistics_hours,
+            "start": history_start.isoformat(),
+            "end": latest.isoformat(),
+            "sensors": sensor_history,
+        }
+
+    @staticmethod
+    def _calculate_database_statistics(
+        sensor_id: str, values: list[float]
+    ) -> dict[str, float]:
+        """Vypočítá statistiky podle typu uvedeného v SENSOR_DEFINITIONS."""
+        if not values:
+            return {}
+
+        metadata = SENSOR_DEFINITIONS.get(sensor_id)
+        if metadata is None:
+            metadata = get_dynamic_sensor_meta(sensor_id)
+        statistics_type = metadata.get("statistics_type", STATISTICS_TYPE_NONE)
+
+        if statistics_type == STATISTICS_TYPE_LINEAR:
+            result = {}
+            if "min" in LINEAR_STATISTICS:
+                result["stats_min"] = round(min(values), 1)
+            if "max" in LINEAR_STATISTICS:
+                result["stats_max"] = round(max(values), 1)
+            if "avg" in LINEAR_STATISTICS:
+                result["stats_avg"] = round(sum(values) / len(values), 1)
+            return result
+
+        if statistics_type != STATISTICS_TYPE_DIRECTIONAL:
+            return {}
+
+        normalized = [value % 360.0 for value in values]
+        sin_avg = sum(math.sin(math.radians(value)) for value in normalized) / len(normalized)
+        cos_avg = sum(math.cos(math.radians(value)) for value in normalized) / len(normalized)
+        average = round(math.degrees(math.atan2(sin_avg, cos_avg)) % 360.0, 1) % 360.0
+        rounded_directions = [round(value / 22.5) * 22.5 % 360 for value in normalized]
+        mode = Counter(rounded_directions).most_common(1)[0][0]
+        resultant_length = min(1.0, math.sqrt(sin_avg**2 + cos_avg**2))
+        variability = (
+            math.degrees(math.sqrt(-2.0 * math.log(resultant_length)))
+            if 0.001 < resultant_length < 1.0
+            else 0.0
+        )
+
+        result = {}
+        if "avg" in DIRECTIONAL_STATISTICS:
+            result["stats_avg"] = round(average, 1)
+        if "mode" in DIRECTIONAL_STATISTICS:
+            result["stats_mode"] = round(mode, 1)
+        if "variability" in DIRECTIONAL_STATISTICS:
+            result["stats_var"] = round(min(variability, 180.0), 1)
+        return result
+
+    def _build_database_dataset(
+        self, normalized: dict
+    ) -> tuple[list[dict], list[dict]]:
+        """Převede normalizované vzorky na záznamy DB bez druhého mapování ID."""
+        sensor_ids = set(normalized.get("sensors", {}))
+
+        # Denní úhrn je zdrojová hodnota pro syntetický srazky_intenzita.
+        # Neukazuje se zde nutně jako HA entita, ale musí zůstat k dispozici
+        # pro případný budoucí přepočet historie.
+        sensor_ids.add("srazky_den")
+
+        sensor_metadata = []
+        for sensor_id in sorted(sensor_ids):
+            meta = SENSOR_DEFINITIONS.get(sensor_id)
+            if meta is None:
+                meta = get_dynamic_sensor_meta(sensor_id)
+
+            sensor_name = (
+                "Srážky den"
+                if sensor_id == "srazky_den"
+                else meta.get("name", sensor_id)
+            )
+
+            sensor_metadata.append(
+                {
+                    "sensor_id": sensor_id,
+                    "sensor_name": sensor_name,
+                    "sensor_type": meta["sensor_type"],
+                }
+            )
+
+        measurements = []
+        samples = [normalized.get("current", {})]
+        samples.extend(normalized.get("history", []))
+
+        for sample in samples:
+            timestamp = sample.get("datum")
+            if not timestamp:
+                continue
+
+            for sensor_id in sensor_ids:
+                value = sample.get(sensor_id)
+                if value is None or isinstance(value, bool):
+                    continue
+                try:
+                    numeric_value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(numeric_value):
+                    continue
+
+                measurements.append(
+                    {
+                        "sensor_id": sensor_id,
+                        "timestamp": timestamp,
+                        "value": numeric_value,
+                    }
+                )
+
+        return sensor_metadata, measurements
 
     # -------------------------------------------------------------------------
     # UNIFIKOVANÉ ZPRACOVÁNÍ DATASETU (LOGIKA V JEDNOM PRŮCHODU)
