@@ -122,14 +122,11 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
 
             # 4) Vytvoření řádku States
             row = States(
-                entity_id=entity_id,
                 metadata_id=metadata_id,
                 attributes_id=attr_id,
                 state=formatted_state,
                 last_changed_ts=utc_timestamp,
                 last_updated_ts=utc_timestamp,
-                last_changed=ts,
-                last_updated=ts,
             )
             session.add(row)
 
@@ -656,6 +653,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
     # DLOUHODOBÉ STATISTIKY Z RECORDERU (OPRAVENÁ RYCHLÁ VERZE)
     # -------------------------------------------------------------------------
 
+    @staticmethod
     def _query_history_values_sync(session_factory, entity_id: str, start_ts: float) -> list[float]:
         """
         Bezpečné synchronní načtení historie hodnot z Recorderu.
@@ -667,7 +665,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         with session_factory() as session:
             rows = session.execute(
                 select(States.state)
-                .where(States.entity_id == entity_id)
+                .select_from(States)
+                .join(StatesMeta, States.metadata_id == StatesMeta.metadata_id)
+                .where(StatesMeta.entity_id == entity_id)
                 .where(States.last_changed_ts >= start_ts)
                 .order_by(States.last_changed_ts.asc())
             ).all()
@@ -716,7 +716,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             with session_factory() as session:
                 rows = session.execute(
                     select(States.state)
-                    .where(States.entity_id == entity_id)
+                    .select_from(States)
+                    .join(StatesMeta, States.metadata_id == StatesMeta.metadata_id)
+                    .where(StatesMeta.entity_id == entity_id)
                     .where(States.last_changed_ts >= start_ts)
                     .order_by(States.last_changed_ts.asc())
                 ).all()
