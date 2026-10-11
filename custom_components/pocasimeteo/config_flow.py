@@ -55,7 +55,7 @@ def build_sensor_form(options_sensors: dict, coordinator_sensors: dict = None) -
             meta = SENSOR_DEFINITIONS[sensor_id]
             fallback_order = meta.get("order", 999)
             fallback_color = meta.get("color", "#3b82f6")
-            fallback_style = GRAPH_STYLE_STEPPED if sensor_id in ["vitr_rychlost", "vitr_narazy", "vitr_smer", "intenzita_srazek"] else GRAPH_STYLE_SMOOTH
+            fallback_style = GRAPH_STYLE_STEPPED if sensor_id in ["vitr_rychlost", "vitr_narazy", "vitr_smer", "srazky_intenzita"] else GRAPH_STYLE_SMOOTH
         else:
             fallback_order = 999
             fallback_color = "#3b82f6"
@@ -93,7 +93,7 @@ def convert_user_input_to_options(user_input: dict) -> dict:
             continue
             
         if sensor_id in SENSOR_DEFINITIONS:
-            sensor_type = SENSOR_DEFINITIONS[sensor_id].get("type", "primary")
+            sensor_type = SENSOR_DEFINITIONS[sensor_id].get("sensor_type", "primary")
         else:
             sensor_type = "secondary"
 

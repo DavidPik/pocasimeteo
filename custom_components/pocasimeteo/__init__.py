@@ -132,12 +132,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator._pocasimeteo_database = database
     coordinator.register_delayed_startup()
     
-    # 1. KROK: První refresh proběhne HNED. Stáhne se JSON, naplní se struktury 
-    # v paměti a self._entity_id_map, aby platformy věděly, jaké entity mají vytvořit.
-    # try:
-    #     await coordinator.async_config_entry_first_refresh()
-    # except Exception as err:
-    #     raise ConfigEntryNotReady(f"Cannot connect to PočasíMeteo API: {err}") from err
+
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator,"entry": entry}

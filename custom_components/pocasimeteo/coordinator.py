@@ -214,8 +214,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             internal_sid = API_TO_INTERNAL_MAPPING.get(key_lower, key_lower)
             self._entity_id_map[api_key.lower()] = f"sensor.{station_prefix}_{internal_sid}"
 
-        # Registrace odloženého startu background workeru
-        self.register_delayed_startup()
 
     # -------------------------------------------------------------------------
     # ASYNCHRONNÍ WRAPPERY PRO EXECUTOR JOBY (VOLAJÍ EXTERNÍ FUNKCE)

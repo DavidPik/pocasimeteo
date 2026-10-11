@@ -161,7 +161,7 @@ class PocasimeteoWeather(
                 {
                     "id": sensor_id,
                     "entity_id": f"sensor.{station_prefix}_{sensor_id}",
-                    "type": meta.get("type", "secondary"),
+                    "type": meta.get("sensor_type", "secondary"),
                     "order": options.get("order", meta.get("order", 999)),
                     "visible": True,
                     "graph_color": options.get(
