@@ -38,12 +38,35 @@ async def async_setup_entry(
     for sid in SENSOR_DEFINITIONS:
         entities.append(PocasimeteoSensor(coordinator, entry, sid))
 
-    # 2. KROK: Vytvoření dynamicky objevených senzorů z API payloadu
-    for sid in coordinator.sensors_payload:
-        if sid not in SENSOR_DEFINITIONS and sid != "weather":
-            entities.append(PocasimeteoSensor(coordinator, entry, sid))
+    # Dynamické senzory se mohou objevit až při prvním API refreshi po startu HA.
+    known_sensor_ids = set(SENSOR_DEFINITIONS)
+    known_sensor_ids.update(
+        sid for sid in coordinator.sensors_payload if sid != "weather"
+    )
+    for sid in sorted(known_sensor_ids - set(SENSOR_DEFINITIONS)):
+        entities.append(PocasimeteoSensor(coordinator, entry, sid))
 
     async_add_entities(entities)
+
+    def _add_new_dynamic_sensors() -> None:
+        new_sensor_ids = {
+            sid
+            for sid in coordinator.sensors_payload
+            if sid not in known_sensor_ids
+            and sid not in SENSOR_DEFINITIONS
+            and sid != "weather"
+        }
+        if not new_sensor_ids:
+            return
+        known_sensor_ids.update(new_sensor_ids)
+        async_add_entities(
+            [
+                PocasimeteoSensor(coordinator, entry, sid)
+                for sid in sorted(new_sensor_ids)
+            ]
+        )
+
+    entry.async_on_unload(coordinator.async_add_listener(_add_new_dynamic_sensors))
 
 
 class PocasimeteoSensor(CoordinatorEntity[PocasimeteoDataUpdateCoordinator], SensorEntity):

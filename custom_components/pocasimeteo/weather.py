@@ -11,10 +11,15 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     ATTR_DATABASE_DIAGNOSTICS,
+    ATTR_GRAPH_CONFIGURATION,
+    ATTR_GRAPH_DATA,
+    GRAPH_CONFIGURATION_VERSION,
+    GRAPH_DATA_VERSION,
     DOMAIN,
     SENSOR_DEFINITIONS,
     CONF_SENSORS,
     CONF_STATION,
+    get_dynamic_sensor_meta,
 )
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
@@ -188,6 +193,33 @@ class PocasimeteoWeather(
             )
 
         sensors_meta.sort(key=lambda sensor: sensor["order"])
+        graph_sensors = []
+        configured_sensor_ids = set(SENSOR_DEFINITIONS) | set(self.coordinator.sensors_payload)
+        for sensor_id in configured_sensor_ids:
+            if sensor_id == "weather":
+                continue
+            metadata = SENSOR_DEFINITIONS.get(sensor_id)
+            if metadata is None:
+                metadata = get_dynamic_sensor_meta(sensor_id)
+            options = sensor_options.get(sensor_id, {})
+            graph_sensors.append(
+                {
+                    "id": sensor_id,
+                    "entity_id": f"sensor.{station_prefix}_{sensor_id}",
+                    "name": metadata.get("name", sensor_id),
+                    "type": metadata.get("sensor_type", "secondary"),
+                    "unit": metadata.get("unit"),
+                    "statistics_type": metadata.get("statistics_type", "none"),
+                    "history_enabled": metadata.get("history_enabled", True),
+                    "order": options.get("order", metadata.get("order", 999)),
+                    "visible": options.get("visible", True),
+                    "graph_color": options.get(
+                        "color", metadata.get("color", "#3b82f6")
+                    ),
+                    "graph_style": options.get("style", "smooth"),
+                }
+            )
+        graph_sensors.sort(key=lambda sensor: (sensor["order"], sensor["id"]))
 
         return {
             "srazky_den": self.coordinator.station_metadata.get("srazky_den", 0),
@@ -202,5 +234,17 @@ class PocasimeteoWeather(
             "statistics_interval": self.coordinator._statistics_interval,
             ATTR_DATABASE_DIAGNOSTICS: self.coordinator.station_metadata.get(
                 ATTR_DATABASE_DIAGNOSTICS, {}
+            ),
+            ATTR_GRAPH_CONFIGURATION: {
+                "version": GRAPH_CONFIGURATION_VERSION,
+                "sensors": graph_sensors,
+            },
+            ATTR_GRAPH_DATA: self.coordinator.station_metadata.get(
+                ATTR_GRAPH_DATA,
+                {
+                    "version": GRAPH_DATA_VERSION,
+                    "period": "current_local_day",
+                    "sensors": {},
+                },
             ),
         }

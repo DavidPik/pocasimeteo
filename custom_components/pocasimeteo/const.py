@@ -54,6 +54,9 @@ ATTR_GRAPH_CONFIGURATION = "graph_configuration"
 ATTR_GRAPH_DATA = "graph_data"
 ATTR_BACKEND_HISTORY = "backend_history"
 
+GRAPH_CONFIGURATION_VERSION = 1
+GRAPH_DATA_VERSION = 1
+
 # Atribut historie z vlastní databáze je určený pro frontend a nesmí
 # obsahovat více než poslední měsíc měření.
 BACKEND_HISTORY_VERSION = 1

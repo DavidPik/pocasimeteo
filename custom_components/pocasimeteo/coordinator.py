@@ -45,6 +45,8 @@ from .const import (
     BACKEND_HISTORY_VERSION,
     BACKEND_HISTORY_MAX_HOURS,
     ATTR_BACKEND_HISTORY,
+    ATTR_GRAPH_DATA,
+    GRAPH_DATA_VERSION,
     ATTR_DATABASE_DIAGNOSTICS,
     get_dynamic_sensor_meta,
     API_TO_INTERNAL_MAPPING,
@@ -171,7 +173,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=f"{DOMAIN}_{entry.entry_id}",
-            update_interval=timedelta(seconds=30),
+            update_interval=None,
         )
 
         # Rolling historie v paměti (pro min/max a kruhové statistiky směru větru)
@@ -265,14 +267,6 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         history_norm = normalized.get("history", [])
         await self._process_and_import_dataset(history_norm, station_prefix)
 
-        # Po prvním úspěšném update přepneme interval
-        if self.update_interval.total_seconds() == 30:
-            update_interval_minutes = self.entry.options.get(
-                CONF_UPDATE_INTERVAL,
-                self.entry.data.get(CONF_UPDATE_INTERVAL, 5),
-            )
-            self.update_interval = timedelta(minutes=update_interval_minutes)
-
          # Vždy se pokusíme spočítat statistiky z Recorderu,
         # i když fronta není prázdná (budou založené na tom, co už v DB je)
         if self.sensors_payload:
@@ -286,6 +280,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         try:
             await self._async_store_normalized_history(normalized)
             await self._async_refresh_database_history(normalized)
+            await self._async_refresh_daily_graph_data(normalized)
         except Exception as err:
             database_error = err
             _LOGGER.exception("Nepodařilo se aktualizovat historii z vlastní databáze")
@@ -361,6 +356,69 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             diagnostics["diagnostics_error"] = diagnostic_message
 
         self.station_metadata[ATTR_DATABASE_DIAGNOSTICS] = diagnostics
+
+    async def _async_refresh_daily_graph_data(self, normalized: dict) -> None:
+        """Compute current local-calendar-day statistics from the integration DB."""
+        database = getattr(self, "_pocasimeteo_database", None)
+        now_local = dt_util.now().replace(tzinfo=None)
+        day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        latest_timestamp = normalized.get("current", {}).get("datum")
+        if not latest_timestamp or database is None:
+            self.station_metadata[ATTR_GRAPH_DATA] = {
+                "version": GRAPH_DATA_VERSION,
+                "period": "current_local_day",
+                "date": day_start.date().isoformat(),
+                "start": day_start.isoformat(),
+                "end": now_local.isoformat(),
+                "sensors": {},
+            }
+            return
+
+        try:
+            latest = self._parse_history_wall_time(str(latest_timestamp))
+        except ValueError:
+            latest = now_local
+        period_end = max(day_start, min(now_local, latest))
+        query_start = day_start.isoformat()
+        query_end = day_start.replace(hour=23, minute=59, second=59).isoformat() + "\uffff"
+        sensor_statistics: dict[str, dict] = {}
+
+        for sensor_id in sorted(normalized.get("sensors", {})):
+            metadata = SENSOR_DEFINITIONS.get(sensor_id)
+            if metadata is None:
+                metadata = get_dynamic_sensor_meta(sensor_id)
+            if not metadata.get("history_enabled", True):
+                continue
+
+            rows = await database.async_get_sensor_history(
+                self.entry.entry_id,
+                sensor_id,
+                query_start,
+                query_end,
+            )
+            values = []
+            for timestamp, value in rows:
+                try:
+                    measured_at = self._database_wall_time(timestamp)
+                except ValueError:
+                    continue
+                if day_start <= measured_at <= period_end:
+                    values.append(float(value))
+
+            sensor_statistics[sensor_id] = {
+                "unit": metadata.get("unit"),
+                "statistics": self._calculate_database_statistics(sensor_id, values),
+                "sample_count": len(values),
+            }
+
+        self.station_metadata[ATTR_GRAPH_DATA] = {
+            "version": GRAPH_DATA_VERSION,
+            "period": "current_local_day",
+            "date": day_start.date().isoformat(),
+            "start": day_start.isoformat(),
+            "end": period_end.isoformat(),
+            "sensors": sensor_statistics,
+        }
 
     async def _async_refresh_database_history(self, normalized: dict) -> None:
         """Načte měsíční historii a statistiky z vlastní DB pro weather entitu."""
@@ -871,16 +929,29 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Background worker úspěšně dokončil import chybějících mezer a uvolnil zámek")
 
     def register_delayed_startup(self):
-        """Zaregistruje systémový listener, který aktivuje worker až po úplném zavedení HA core."""
+        """Start polling only after Home Assistant has finished startup."""
         from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 
         async def _play_delayed_history_worker(_):
-            _LOGGER.debug("Home Assistant plně dokončil start – aktivuji background worker historie")
+            _LOGGER.debug("Home Assistant is fully started; starting PočasíMeteo refresh")
             self._ha_started = True
             if self._history_queue and (self._history_task is None or self._history_task.done()):
                 self._history_task = self.hass.async_create_task(self._history_worker())
 
-        self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _play_delayed_history_worker)
+            update_interval_minutes = self.entry.options.get(
+                CONF_UPDATE_INTERVAL,
+                self.entry.data.get(CONF_UPDATE_INTERVAL, 5),
+            )
+            self.update_interval = timedelta(minutes=update_interval_minutes)
+            await self.async_refresh()
+
+        remove_listener = self.hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STARTED, _play_delayed_history_worker
+        )
+        self.entry.async_on_unload(remove_listener)
+        # Reloads after Core startup do not receive EVENT_HOMEASSISTANT_STARTED again.
+        if self.hass.is_running:
+            self.hass.async_create_task(_play_delayed_history_worker(None))
 
     # -------------------------------------------------------------------------
     # DLOUHODOBÉ STATISTIKY Z RECORDERU (OPRAVENÁ RYCHLÁ VERZE)
