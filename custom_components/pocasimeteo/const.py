@@ -62,6 +62,9 @@ BACKEND_HISTORY_MAX_HOURS = 720
 # Zatím se nepoužívají v přechodovém toku přes atribut backend_history.
 # Pro požadavky do 72 hodin se vracejí skutečná měření po 5 minutách;
 # pro delší období se data agregují do hodinových průměrů.
+SERVICE_GET_HISTORY = "get_history"
+HISTORY_ACTION_VERSION = 1
+
 HISTORY_ACTION_MAX_DAYS = 60
 HISTORY_ACTION_RAW_MAX_HOURS = 72
 HISTORY_ACTION_RAW_INTERVAL_MINUTES = 5
