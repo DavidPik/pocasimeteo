@@ -165,30 +165,32 @@ class SQLiteDatabaseBackend:
                 )
 
             expected_columns = {
-                "schema_info": {"schema_version": "INTEGER"},
+                "schema_info": {
+                    "schema_version": ("INTEGER", 1, 0),
+                },
                 _TABLE_STATIONS: {
-                    "station_id": "TEXT",
-                    "station_name": "TEXT",
-                    "created_at": "TEXT",
-                    "updated_at": "TEXT",
+                    "station_id": ("TEXT", 0, 1),
+                    "station_name": ("TEXT", 1, 0),
+                    "created_at": ("TEXT", 1, 0),
+                    "updated_at": ("TEXT", 1, 0),
                 },
                 _TABLE_SENSOR_METADATA: {
-                    "station_id": "TEXT",
-                    "sensor_id": "TEXT",
-                    "sensor_name": "TEXT",
-                    "sensor_type": "TEXT",
+                    "station_id": ("TEXT", 1, 1),
+                    "sensor_id": ("TEXT", 1, 2),
+                    "sensor_name": ("TEXT", 1, 0),
+                    "sensor_type": ("TEXT", 1, 0),
                 },
                 _TABLE_MEASUREMENTS: {
-                    "id": "INTEGER",
-                    "station_id": "TEXT",
-                    "sensor_id": "TEXT",
-                    "timestamp": "TEXT",
-                    "value": "REAL",
+                    "id": ("INTEGER", 0, 1),
+                    "station_id": ("TEXT", 1, 0),
+                    "sensor_id": ("TEXT", 1, 0),
+                    "timestamp": ("TEXT", 1, 0),
+                    "value": ("REAL", 1, 0),
                 },
             }
             for table, columns in expected_columns.items():
                 actual = {
-                    row[1]: str(row[2]).upper()
+                    row[1]: (str(row[2]).upper(), row[3], row[5])
                     for row in conn.execute(f"PRAGMA table_info({table})")
                 }
                 if actual != columns:
@@ -202,6 +204,26 @@ class SQLiteDatabaseBackend:
             ).fetchone()
             if index is None:
                 raise RuntimeError("V databázi chybí index měření.")
+
+            unique_measurement_indexes = [
+                row[1]
+                for row in conn.execute(
+                    f"PRAGMA index_list({_TABLE_MEASUREMENTS})"
+                )
+                if row[2]
+            ]
+            has_measurement_key = any(
+                [
+                    column[2]
+                    for column in conn.execute(
+                        f"PRAGMA index_info({index_name})"
+                    )
+                ]
+                == ["station_id", "sensor_id", "timestamp"]
+                for index_name in unique_measurement_indexes
+            )
+            if not has_measurement_key:
+                raise RuntimeError("Databázi chybí unikátní klíč měření.")
 
             for station_id, station_name, created_at, updated_at in conn.execute(
                 f"SELECT station_id, station_name, created_at, updated_at "
