@@ -731,7 +731,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                             values.append(v)
                     except (TypeError, ValueError):
                         continue
-                return values
+                return values, len(rows)
 
         # HLAVNÍ CYKLUS — iterujeme přes všechny senzory v sensors_payload
         for sid, payload in data.items():
@@ -740,12 +740,27 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             entity_id = f"sensor.{station_prefix}_{internal_sid}"
 
             # Načteme historii z Recorderu (nová verze)
-            values = await recorder.async_add_executor_job(
+            values, matched_row_count = await recorder.async_add_executor_job(
                 _query_history_values_sync,
                 session_factory,
                 entity_id,
                 start_timestamp,
             )
+
+            if internal_sid == "srazky_intenzita":
+                _LOGGER.debug(
+                    "Recorder history diagnostic for %s: start_ts=%.3f, "
+                    "matched_rows=%d, numeric_values=%d, min=%s, max=%s, "
+                    "current=%s, fallback=%s",
+                    entity_id,
+                    start_timestamp,
+                    matched_row_count,
+                    len(values),
+                    min(values) if values else None,
+                    max(values) if values else None,
+                    payload.get("value"),
+                    not values,
+                )
 
             # Fallback — Recorder nemá žádná data
             if not values:
