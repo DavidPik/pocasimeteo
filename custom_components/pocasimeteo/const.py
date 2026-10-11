@@ -58,6 +58,17 @@ ATTR_BACKEND_HISTORY = "backend_history"
 BACKEND_HISTORY_VERSION = 1
 BACKEND_HISTORY_MAX_HOURS = 720
 
+# Limity cílové akce pro dotazování historie.
+# Zatím se nepoužívají v přechodovém toku přes atribut backend_history.
+# Pro požadavky do 72 hodin se vracejí skutečná měření po 5 minutách;
+# pro delší období se data agregují do hodinových průměrů.
+HISTORY_ACTION_MAX_DAYS = 60
+HISTORY_ACTION_RAW_MAX_HOURS = 72
+HISTORY_ACTION_RAW_INTERVAL_MINUTES = 5
+HISTORY_ACTION_AGGREGATE_INTERVAL_HOURS = 1
+HISTORY_ACTION_RAW_PERIODS_HOURS = (24, 48, 72)
+HISTORY_ACTION_AGGREGATE_PERIODS_DAYS = (5, 7, 14, 30, 60)
+
 # Diagnostika databáze publikovaná WEATHER entitou
 ATTR_DATABASE_DIAGNOSTICS = "database_diagnostics"
 
