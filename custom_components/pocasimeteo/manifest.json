@@ -1,12 +1,17 @@
 {
   "domain": "pocasimeteo",
   "name": "PočasíMeteo",
-  "version": "6.8.2",
+  "version": "6.8.3",
   "documentation": "https://github.com/davidpik/pocasimeteo",
   "issue_tracker": "https://github.com/davidpik/pocasimeteo/issues",
   "requirements": [],
-  "codeowners": ["@davidpik"],
+  "codeowners": [
+    "@davidpik"
+  ],
   "iot_class": "cloud_polling",
   "config_flow": true,
-  "platforms": ["sensor", "weather"]
+  "platforms": [
+    "sensor",
+    "weather"
+  ]
 }
