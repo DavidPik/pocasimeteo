@@ -98,7 +98,7 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
                 v_float = float(value)
                 if math.isnan(v_float):
                     continue
-                formatted_state = f"{v_float:.1f}"
+                formatted_state = f"{v_float:.2f}"
             except (ValueError, TypeError):
                 formatted_state = str(value)
 
@@ -392,9 +392,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if statistics_type == STATISTICS_TYPE_LINEAR:
             result = {}
             if "min" in LINEAR_STATISTICS:
-                result["stats_min"] = round(min(values), 1)
+                result["stats_min"] = round(min(values), 2)
             if "max" in LINEAR_STATISTICS:
-                result["stats_max"] = round(max(values), 1)
+                result["stats_max"] = round(max(values), 2)
             if "avg" in LINEAR_STATISTICS:
                 result["stats_avg"] = round(sum(values) / len(values), 1)
             return result
@@ -668,8 +668,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 .select_from(States)
                 .join(StatesMeta, States.metadata_id == StatesMeta.metadata_id)
                 .where(StatesMeta.entity_id == entity_id)
-                .where(States.last_changed_ts >= start_ts)
-                .order_by(States.last_changed_ts.asc())
+                .where(States.last_updated_ts >= start_ts)
+                .order_by(States.last_updated_ts.asc())
             ).all()
 
             values: list[float] = []
@@ -693,7 +693,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         Výsledky ukládá exkluzivně do self.station_metadata["sensor_stats"].
         """
 
-        # Použijeme lokální čas (CEST), protože Recorder má last_changed_ts uložené jako epoch z lokálního času
+        # Časové okno porovnáváme s last_updated_ts použitým v Recorder dotazu.
         now_local = dt_util.now()
         start_local = now_local - timedelta(hours=self._statistics_interval)
         start_timestamp = start_local.timestamp()
@@ -719,8 +719,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     .select_from(States)
                     .join(StatesMeta, States.metadata_id == StatesMeta.metadata_id)
                     .where(StatesMeta.entity_id == entity_id)
-                    .where(States.last_changed_ts >= start_ts)
-                    .order_by(States.last_changed_ts.asc())
+                    .where(States.last_updated_ts >= start_ts)
+                    .order_by(States.last_updated_ts.asc())
                 ).all()
 
                 values = []
@@ -820,8 +820,8 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             # --- Standardní statistiky pro ostatní senzory ---
             else:
                 self.station_metadata["sensor_stats"][sid] = {
-                    "stats_min": round(min(values), 1),
-                    "stats_max": round(max(values), 1),
+                    "stats_min": round(min(values), 2),
+                    "stats_max": round(max(values), 2),
                 }
 
     # -------------------------------------------------------------------------
@@ -908,7 +908,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         history = []
         prev_h = None
 
-        for item in history_raw:
+        # Syntetické hodnoty počítáme chronologicky, bez ohledu na pořadí odpovědi API.
+        history_raw_sorted = sorted(
+            history_raw,
+            key=lambda item: datetime.fromisoformat(item["Datum"].replace("Z", "")),
+        )
+
+        for item in history_raw_sorted:
             h = {
                 "datum": item.get("Datum"),
                 "teplota_vnejsi": self._to_float(item.get("TeplotaVnejsi")),
