@@ -32,6 +32,9 @@ from .const import (
     SENSOR_DEFINITIONS,
     DEFAULT_SENSOR_OPTIONS,
     DEFAULT_STATISTICS_INTERVAL,
+    HISTORY_ACTION_MAX_DAYS,
+    HISTORY_ACTION_RAW_MAX_HOURS,
+    HISTORY_ACTION_AGGREGATE_INTERVAL_HOURS,
     ALLOWED_STATISTICS_INTERVALS,
     STATISTICS_TYPE_LINEAR,
     STATISTICS_TYPE_DIRECTIONAL,
@@ -423,6 +426,168 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         if "variability" in DIRECTIONAL_STATISTICS:
             result["stats_var"] = round(min(variability, 180.0), 1)
         return result
+
+    @staticmethod
+    def _parse_history_wall_time(value: str) -> datetime:
+        """Parse timestamp as station/HA local wall time without timezone shifting."""
+        if not isinstance(value, str):
+            raise ValueError("Časové razítko musí být ISO řetězec.")
+
+        # API timestamps are kept as supplied. A trailing Z or numeric offset is
+        # treated as metadata only: the project contract uses the same wall time
+        # as the station and HA and must not shift it to another timezone.
+        timestamp = value[:-1] if value.endswith("Z") else value
+        try:
+            parsed = datetime.fromisoformat(timestamp)
+        except ValueError as err:
+            raise ValueError(f"Neplatné ISO časové razítko: {value!r}.") from err
+        return parsed.replace(tzinfo=None)
+
+    @classmethod
+    def _database_wall_time(cls, value: str) -> datetime:
+        """Parse a stored timestamp while preserving its displayed wall time."""
+        return cls._parse_history_wall_time(value)
+
+    @classmethod
+    def _database_wall_timestamp(cls, value: str) -> str:
+        """Return stored timestamps without an offset that could shift frontend time."""
+        return cls._database_wall_time(value).isoformat()
+
+    @staticmethod
+    def _aggregate_history_by_hour(
+        sensor_id: str, rows: list[tuple[str, float]]
+    ) -> list[dict]:
+        """Return hourly means; partial first/last hours use their available samples."""
+        metadata = SENSOR_DEFINITIONS.get(sensor_id)
+        if metadata is None:
+            metadata = get_dynamic_sensor_meta(sensor_id)
+
+        hourly_values: dict[datetime, list[float]] = {}
+        for timestamp, value in rows:
+            parsed = PocasimeteoDataUpdateCoordinator._database_wall_time(timestamp)
+            bucket = parsed.replace(minute=0, second=0, microsecond=0)
+            hourly_values.setdefault(bucket, []).append(float(value))
+
+        points = []
+        for bucket, values in sorted(hourly_values.items()):
+            if metadata.get("statistics_type") == STATISTICS_TYPE_DIRECTIONAL:
+                sin_avg = sum(math.sin(math.radians(value)) for value in values) / len(values)
+                cos_avg = sum(math.cos(math.radians(value)) for value in values) / len(values)
+                value = math.degrees(math.atan2(sin_avg, cos_avg)) % 360.0
+            else:
+                value = sum(values) / len(values)
+
+            points.append(
+                {
+                    "timestamp": bucket.isoformat(),
+                    "value": round(value, 2),
+                }
+            )
+        return points
+
+    async def async_get_history(self, requests: list[dict]) -> list[dict]:
+        """Read requested sensor ranges from the integration database."""
+        if not isinstance(requests, list) or not requests:
+            raise ValueError("Požadavek musí obsahovat alespoň jeden senzor.")
+
+        seen_sensor_ids: set[str] = set()
+        parsed_requests = []
+        for request in requests:
+            if not isinstance(request, dict):
+                raise ValueError("Každý požadavek senzoru musí být objekt.")
+            sensor_id = request.get("sensor_id")
+            if not isinstance(sensor_id, str) or not sensor_id:
+                raise ValueError("Každý požadavek musí obsahovat sensor_id.")
+            if sensor_id in seen_sensor_ids:
+                raise ValueError(f"Senzor {sensor_id!r} je v požadavku vícekrát.")
+            seen_sensor_ids.add(sensor_id)
+
+            metadata = SENSOR_DEFINITIONS.get(sensor_id)
+            if metadata is None:
+                if sensor_id not in self.sensors_payload:
+                    raise ValueError(f"Neznámé ID senzoru: {sensor_id!r}.")
+                metadata = get_dynamic_sensor_meta(sensor_id)
+            if not metadata.get("history_enabled", True):
+                raise ValueError(f"Historie senzoru {sensor_id!r} není povolena.")
+
+            start = self._parse_history_wall_time(request.get("start"))
+            end = self._parse_history_wall_time(request.get("end"))
+            if end <= start:
+                raise ValueError(f"Konec období senzoru {sensor_id!r} musí být po začátku.")
+            if end - start > timedelta(days=HISTORY_ACTION_MAX_DAYS):
+                raise ValueError(
+                    f"Historie senzoru {sensor_id!r} může pokrývat nejvýše "
+                    f"{HISTORY_ACTION_MAX_DAYS} dní."
+                )
+            parsed_requests.append((sensor_id, start, end))
+
+        database = getattr(self, "_pocasimeteo_database", None)
+        if database is None:
+            database = PocasimeteoDatabase(
+                self.hass,
+                domain=DOMAIN,
+                filename=DB_FILENAME,
+            )
+            self._pocasimeteo_database = database
+
+        results = []
+        for sensor_id, start, end in parsed_requests:
+            # Use whole local-date boundaries for the indexed text query, then
+            # filter exact requested wall times below. This also includes API
+            # timestamps that carry a trailing Z or fractional seconds.
+            query_start = start.strftime("%Y-%m-%dT00:00:00")
+            query_end = end.strftime("%Y-%m-%dT23:59:59") + "\uffff"
+            stored_rows = await database.async_get_sensor_history(
+                self.entry.entry_id,
+                sensor_id,
+                query_start,
+                query_end,
+            )
+
+            rows = []
+            for timestamp, value in stored_rows:
+                try:
+                    measured_at = self._database_wall_time(timestamp)
+                except (TypeError, ValueError):
+                    _LOGGER.warning(
+                        "Přeskakuji neplatné časové razítko historie %r senzoru %s",
+                        timestamp,
+                        sensor_id,
+                    )
+                    continue
+                if start <= measured_at <= end:
+                    rows.append((timestamp, float(value)))
+            rows.sort(key=lambda row: self._database_wall_time(row[0]))
+
+            values = [value for _, value in rows]
+            duration = end - start
+            if duration <= timedelta(hours=HISTORY_ACTION_RAW_MAX_HOURS):
+                resolution = f"{HISTORY_ACTION_RAW_INTERVAL_MINUTES}m"
+                history = [
+                    {
+                        "timestamp": self._database_wall_timestamp(timestamp),
+                        "value": round(value, 2),
+                    }
+                    for timestamp, value in rows
+                ]
+            else:
+                resolution = f"{HISTORY_ACTION_AGGREGATE_INTERVAL_HOURS}h"
+                history = self._aggregate_history_by_hour(sensor_id, rows)
+
+            results.append(
+                {
+                    "sensor_id": sensor_id,
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "resolution": resolution,
+                    "history": history,
+                    "statistics": self._calculate_database_statistics(
+                        sensor_id, values
+                    ),
+                }
+            )
+
+        return results
 
     def _build_database_dataset(
         self, normalized: dict
