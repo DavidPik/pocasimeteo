@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Připojení k PočasíMeteo",
+        "data": {
+          "station_name": "Název stanice",
+          "api_key": "API klíč"
+        }
+      },
+      "config": {
+        "title": "Nastavení integrace a databáze",
+        "data": {
+          "database_path": "Cesta k souboru SQLite databáze",
+          "update_interval": "Interval aktualizace (minuty)",
+          "forecast_entity_id": "Entita předpovědi",
+          "statistics_interval": "Interval statistik"
+        }
+      },
+      "reconfigure": {
+        "title": "Změna umístění databáze",
+        "data": {
+          "database_path": "Cesta k souboru SQLite databáze"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Oprava nastavení databáze",
+        "description": "Nastavenou databázi se nepodařilo otevřít nebo ověřit. Zadejte cestu k platné existující databázi nebo k novému souboru.",
+        "data": {
+          "database_path": "Cesta k souboru SQLite databáze"
+        }
+      }
+    },
+    "error": {
+      "invalid_api_key": "API klíč se nepodařilo ověřit.",
+      "invalid_database": "Databázi se nepodařilo vytvořit nebo není platná. Zkontrolujte cestu, oprávnění, schéma a uložená data."
+    },
+    "abort": {}
+  }
+}

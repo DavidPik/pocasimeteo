@@ -22,9 +22,9 @@ from sqlalchemy.exc import OperationalError
 
 from .const import (
     DOMAIN,
-    DB_FILENAME,
     API_URL_BASE,
     CONF_API_KEY,
+    CONF_DATABASE_PATH,
     CONF_UPDATE_INTERVAL,
     CONF_SENSORS,
     CONF_STATION,
@@ -314,7 +314,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             database = PocasimeteoDatabase(
                 self.hass,
                 domain=DOMAIN,
-                filename=DB_FILENAME,
+                database_path=self.entry.data.get(CONF_DATABASE_PATH),
             )
             self._pocasimeteo_database = database
 
@@ -579,7 +579,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             database = PocasimeteoDatabase(
                 self.hass,
                 domain=DOMAIN,
-                filename=DB_FILENAME,
+                database_path=self.entry.data.get(CONF_DATABASE_PATH),
             )
             self._pocasimeteo_database = database
 

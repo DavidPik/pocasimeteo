@@ -39,6 +39,8 @@ class DatabaseBackend(Protocol):
 
     def initialize(self) -> None: ...
 
+    def validate(self) -> None: ...
+
     def store_dataset(
         self,
         station_id: str,
@@ -74,8 +76,11 @@ class SQLiteDatabaseBackend:
 
     @contextmanager
     def _connection(self):
-        """Open a connection and always close it after the transaction."""
-        conn = sqlite3.connect(self.db_path, timeout=30)
+        """Open an existing database; ordinary access must never create a file."""
+        if not self.db_path.is_file():
+            raise FileNotFoundError(f"Databáze neexistuje: {self.db_path}")
+        uri = f"{self.db_path.resolve().as_uri()}?mode=rw"
+        conn = sqlite3.connect(uri, uri=True, timeout=30)
         try:
             with conn:
                 conn.execute("PRAGMA busy_timeout = 30000")
@@ -84,60 +89,159 @@ class SQLiteDatabaseBackend:
             conn.close()
 
     def initialize(self) -> None:
-        """Create the schema or reject a database with an unknown version."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        """Create a fresh database, or validate an existing one without altering it."""
+        if self.db_path.exists():
+            self.validate()
+            return
 
-        with self._connection() as conn:
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS schema_info "
-                "(schema_version INTEGER NOT NULL)"
-            )
-            versions = conn.execute(
-                "SELECT schema_version FROM schema_info"
-            ).fetchall()
-            if not versions:
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        created = False
+        try:
+            # Reserve the path so this code never overwrites a file created concurrently.
+            with self.db_path.open("xb"):
+                pass
+            created = True
+            with sqlite3.connect(self.db_path, timeout=30) as conn:
+                conn.execute("PRAGMA busy_timeout = 30000")
+                conn.execute(
+                    "CREATE TABLE schema_info (schema_version INTEGER NOT NULL)"
+                )
                 conn.execute(
                     "INSERT INTO schema_info (schema_version) VALUES (?)",
                     (_SCHEMA_VERSION,),
                 )
-            elif len(versions) != 1 or versions[0][0] != _SCHEMA_VERSION:
+                conn.execute(
+                    f"""CREATE TABLE {_TABLE_STATIONS} (
+                        station_id TEXT PRIMARY KEY,
+                        station_name TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )"""
+                )
+                conn.execute(
+                    f"""CREATE TABLE {_TABLE_SENSOR_METADATA} (
+                        station_id TEXT NOT NULL,
+                        sensor_id TEXT NOT NULL,
+                        sensor_name TEXT NOT NULL,
+                        sensor_type TEXT NOT NULL,
+                        PRIMARY KEY (station_id, sensor_id)
+                    )"""
+                )
+                conn.execute(
+                    f"""CREATE TABLE {_TABLE_MEASUREMENTS} (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        station_id TEXT NOT NULL,
+                        sensor_id TEXT NOT NULL,
+                        timestamp TEXT NOT NULL,
+                        value REAL NOT NULL,
+                        UNIQUE (station_id, sensor_id, timestamp)
+                    )"""
+                )
+                conn.execute(
+                    f"""CREATE INDEX idx_measurements_lookup
+                        ON {_TABLE_MEASUREMENTS}
+                        (station_id, sensor_id, timestamp)"""
+                )
+            self.validate()
+        except Exception:
+            if created:
+                self.db_path.unlink(missing_ok=True)
+            raise
+
+    def validate(self) -> None:
+        """Validate schema, SQLite integrity, version, and persisted row values."""
+        with self._connection() as conn:
+            integrity = conn.execute("PRAGMA integrity_check").fetchone()
+            if integrity is None or integrity[0] != "ok":
+                raise RuntimeError(f"SQLite integrity_check failed: {integrity!r}")
+
+            versions = conn.execute(
+                "SELECT schema_version FROM schema_info"
+            ).fetchall()
+            if len(versions) != 1 or versions[0][0] != _SCHEMA_VERSION:
                 raise RuntimeError(
                     "Unsupported PočasíMeteo database schema version: "
                     f"{versions!r} (expected {_SCHEMA_VERSION})"
                 )
 
-            conn.execute(
-                f"""CREATE TABLE IF NOT EXISTS {_TABLE_STATIONS} (
-                    station_id TEXT PRIMARY KEY,
-                    station_name TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )"""
+            expected_columns = {
+                "schema_info": {"schema_version": "INTEGER"},
+                _TABLE_STATIONS: {
+                    "station_id": "TEXT",
+                    "station_name": "TEXT",
+                    "created_at": "TEXT",
+                    "updated_at": "TEXT",
+                },
+                _TABLE_SENSOR_METADATA: {
+                    "station_id": "TEXT",
+                    "sensor_id": "TEXT",
+                    "sensor_name": "TEXT",
+                    "sensor_type": "TEXT",
+                },
+                _TABLE_MEASUREMENTS: {
+                    "id": "INTEGER",
+                    "station_id": "TEXT",
+                    "sensor_id": "TEXT",
+                    "timestamp": "TEXT",
+                    "value": "REAL",
+                },
+            }
+            for table, columns in expected_columns.items():
+                actual = {
+                    row[1]: str(row[2]).upper()
+                    for row in conn.execute(f"PRAGMA table_info({table})")
+                }
+                if actual != columns:
+                    raise RuntimeError(
+                        f"Neplatná struktura tabulky {table}: {actual!r}"
+                    )
+
+            index = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='index' "
+                "AND name='idx_measurements_lookup'"
+            ).fetchone()
+            if index is None:
+                raise RuntimeError("V databázi chybí index měření.")
+
+            for station_id, station_name, created_at, updated_at in conn.execute(
+                f"SELECT station_id, station_name, created_at, updated_at "
+                f"FROM {_TABLE_STATIONS}"
+            ):
+                if not station_id or not station_name:
+                    raise RuntimeError("Databáze obsahuje neplatnou stanici.")
+                try:
+                    datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                    datetime.fromisoformat(str(updated_at).replace("Z", "+00:00"))
+                except (TypeError, ValueError) as err:
+                    raise RuntimeError(
+                        "Databáze obsahuje neplatné časové údaje stanice."
+                    ) from err
+
+            for station_id, sensor_id, sensor_name, sensor_type in conn.execute(
+                f"SELECT station_id, sensor_id, sensor_name, sensor_type "
+                f"FROM {_TABLE_SENSOR_METADATA}"
+            ):
+                if not all((station_id, sensor_id, sensor_name, sensor_type)):
+                    raise RuntimeError("Databáze obsahuje neplatná metadata senzoru.")
+
+            rows = conn.execute(
+                f"SELECT station_id, sensor_id, timestamp, value "
+                f"FROM {_TABLE_MEASUREMENTS}"
             )
-            conn.execute(
-                f"""CREATE TABLE IF NOT EXISTS {_TABLE_SENSOR_METADATA} (
-                    station_id TEXT NOT NULL,
-                    sensor_id TEXT NOT NULL,
-                    sensor_name TEXT NOT NULL,
-                    sensor_type TEXT NOT NULL,
-                    PRIMARY KEY (station_id, sensor_id)
-                )"""
-            )
-            conn.execute(
-                f"""CREATE TABLE IF NOT EXISTS {_TABLE_MEASUREMENTS} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    station_id TEXT NOT NULL,
-                    sensor_id TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    value REAL NOT NULL,
-                    UNIQUE (station_id, sensor_id, timestamp)
-                )"""
-            )
-            conn.execute(
-                f"""CREATE INDEX IF NOT EXISTS idx_measurements_lookup
-                    ON {_TABLE_MEASUREMENTS}
-                    (station_id, sensor_id, timestamp)"""
-            )
+            for station_id, sensor_id, timestamp, value in rows:
+                if not station_id or not sensor_id or not timestamp:
+                    raise RuntimeError("Databáze obsahuje neúplný záznam měření.")
+                try:
+                    datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+                    numeric_value = float(value)
+                except (TypeError, ValueError) as err:
+                    raise RuntimeError(
+                        "Databáze obsahuje neplatný čas nebo hodnotu měření."
+                    ) from err
+                if not math.isfinite(numeric_value):
+                    raise RuntimeError(
+                        "Databáze obsahuje nečíselnou hodnotu měření."
+                    )
 
     def store_dataset(
         self,
@@ -296,9 +400,14 @@ class PocasimeteoDatabase:
         domain: str = DOMAIN,
         filename: str = DB_FILENAME,
         backend: DatabaseBackend | None = None,
+        database_path: str | Path | None = None,
     ) -> None:
         self.hass = hass
-        self.db_path = Path(hass.config.path(".storage")) / domain / filename
+        self.db_path = (
+            Path(database_path).expanduser()
+            if database_path is not None
+            else Path(hass.config.path(".storage")) / domain / filename
+        )
         self._backend: DatabaseBackend = backend or SQLiteDatabaseBackend(self.db_path)
         self._initialized = False
         self._initialize_lock = asyncio.Lock()
@@ -309,8 +418,20 @@ class PocasimeteoDatabase:
         async with self._initialize_lock:
             if self._initialized:
                 return
-            await self.hass.async_add_executor_job(self._backend.initialize)
+            await self.hass.async_add_executor_job(self._backend.validate)
             self._initialized = True
+
+    async def async_prepare_for_config(self) -> None:
+        """Create a missing DB during config validation; never repair an existing one."""
+        await self.hass.async_add_executor_job(self._backend.initialize)
+        self._initialized = True
+
+    async def async_open_and_validate(self) -> None:
+        """Open and validate an existing DB during config-entry startup."""
+        if not self.db_path.is_file():
+            raise FileNotFoundError(f"Databáze neexistuje: {self.db_path}")
+        await self.hass.async_add_executor_job(self._backend.validate)
+        self._initialized = True
 
     async def async_store_dataset(
         self,

@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to PočasíMeteo",
+        "data": {
+          "station_name": "Station name",
+          "api_key": "API key"
+        }
+      },
+      "config": {
+        "title": "Configure integration and database",
+        "data": {
+          "database_path": "SQLite database file path",
+          "update_interval": "Update interval (minutes)",
+          "forecast_entity_id": "Forecast entity",
+          "statistics_interval": "Statistics interval"
+        }
+      },
+      "reconfigure": {
+        "title": "Change database location",
+        "data": {
+          "database_path": "SQLite database file path"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Repair database settings",
+        "description": "The configured database could not be opened or validated. Choose a valid existing database or a new file path.",
+        "data": {
+          "database_path": "SQLite database file path"
+        }
+      }
+    },
+    "error": {
+      "invalid_api_key": "The API key could not be validated.",
+      "invalid_database": "The database could not be created or is invalid. Check the path, permissions, schema, and stored data."
+    },
+    "abort": {}
+  }
+}

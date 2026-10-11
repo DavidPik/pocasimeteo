@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import asyncio
+from pathlib import Path
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -14,6 +15,8 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import (
     DOMAIN,
+    DB_FILENAME,
+    CONF_DATABASE_PATH,
     CONF_STATION,
     CONF_API_KEY,
     CONF_UPDATE_INTERVAL,
@@ -28,6 +31,7 @@ from .const import (
     GRAPH_STYLE_SMOOTH,
     GRAPH_STYLE_STEPPED,
 )
+from .database import PocasimeteoDatabase
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -202,20 +206,34 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_config(self, user_input=None) -> FlowResult:
+        errors = {}
         if user_input is not None:
-            options = convert_user_input_to_options(user_input)
+            database_path = user_input.get(CONF_DATABASE_PATH, "").strip()
+            try:
+                await self._async_prepare_database(database_path)
+            except Exception as err:
+                _LOGGER.error("Nelze připravit databázi PočasíMeteo: %s", err)
+                errors["base"] = "invalid_database"
+            else:
+                self._database_path = str(Path(database_path).expanduser().resolve())
+                options = convert_user_input_to_options(user_input)
 
-            return self.async_create_entry(
-                title=self._station_name,
-                data={
-                    CONF_STATION: self._station_name,
-                    CONF_API_KEY: self._api_key,
-                    CONF_UPDATE_INTERVAL: options[CONF_UPDATE_INTERVAL],
-                },
-                options=options,
-            )
+                return self.async_create_entry(
+                    title=self._station_name,
+                    data={
+                        CONF_STATION: self._station_name,
+                        CONF_API_KEY: self._api_key,
+                        CONF_UPDATE_INTERVAL: options[CONF_UPDATE_INTERVAL],
+                        CONF_DATABASE_PATH: self._database_path,
+                    },
+                    options=options,
+                )
 
-        return self.async_show_form(step_id="config", data_schema=self._build_schema())
+        return self.async_show_form(
+            step_id="config",
+            data_schema=self._build_schema(),
+            errors=errors,
+        )
 
     def _build_schema(self):
         """Sestaví čisté výchozí schéma s vyloučením budoucí vlastní weather entity."""
@@ -230,7 +248,11 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if entity.entity_id.startswith("weather.") and entity.entity_id != own_weather_entity
         )
 
+        default_db_path = str(
+            Path(self.hass.config.path(".storage")) / DOMAIN / DB_FILENAME
+        )
         schema = {
+            vol.Required(CONF_DATABASE_PATH, default=default_db_path): str,
             vol.Required(CONF_UPDATE_INTERVAL, default=DEFAULT_OPTIONS[CONF_UPDATE_INTERVAL]): vol.All(int, vol.Range(min=1, max=60)),
             vol.Optional(CONF_FORECAST_ENTITY_ID, default=""): vol.In([""] + weather_entities),
 
@@ -243,6 +265,96 @@ class PocasimeteoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         schema.update(build_sensor_form(DEFAULT_SENSOR_OPTIONS))
         return vol.Schema(schema)
+
+    async def _async_prepare_database(self, database_path: str) -> None:
+        """Validate an existing database or create and validate a new one."""
+        if not database_path:
+            raise ValueError("Cesta k databázi nesmí být prázdná.")
+        resolved_path = Path(database_path).expanduser()
+        if not resolved_path.is_absolute():
+            raise ValueError("Cesta k databázi musí být absolutní.")
+        database = PocasimeteoDatabase(
+            self.hass,
+            database_path=resolved_path,
+        )
+        await database.async_prepare_for_config()
+
+    async def async_step_reconfigure(self, user_input=None) -> FlowResult:
+        """Allow changing the database path from the integration settings."""
+        entry = self._get_reconfigure_entry()
+        errors = {}
+        if user_input is not None:
+            database_path = user_input.get(CONF_DATABASE_PATH, "").strip()
+            try:
+                await self._async_prepare_database(database_path)
+            except Exception as err:
+                _LOGGER.error("Neplatná databáze PočasíMeteo: %s", err)
+                errors["base"] = "invalid_database"
+            else:
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates={
+                        CONF_DATABASE_PATH: str(
+                            Path(database_path).expanduser().resolve()
+                        )
+                    },
+                )
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema({
+                vol.Required(
+                    CONF_DATABASE_PATH,
+                    default=entry.data.get(
+                        CONF_DATABASE_PATH,
+                        str(Path(self.hass.config.path(".storage")) / DOMAIN / DB_FILENAME),
+                    ),
+                ): str,
+            }),
+            errors=errors,
+        )
+
+    async def async_step_reauth(self, entry_data) -> FlowResult:
+        """Open a database settings dialog after startup validation failed."""
+        self._reauth_entry = self.hass.config_entries.async_get_entry(
+            self.context["entry_id"]
+        )
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None) -> FlowResult:
+        """Validate a replacement database and resume the existing entry."""
+        entry = getattr(self, "_reauth_entry", None)
+        if entry is None:
+            entry = self.hass.config_entries.async_get_entry(
+                self.context["entry_id"]
+            )
+            self._reauth_entry = entry
+        errors = {}
+        if user_input is not None:
+            database_path = user_input.get(CONF_DATABASE_PATH, "").strip()
+            try:
+                await self._async_prepare_database(database_path)
+            except Exception as err:
+                _LOGGER.error("Neplatná databáze PočasíMeteo: %s", err)
+                errors["base"] = "invalid_database"
+            else:
+                return self.async_update_reload_and_abort(
+                    entry,
+                    data_updates={
+                        CONF_DATABASE_PATH: str(
+                            Path(database_path).expanduser().resolve()
+                        )
+                    },
+                )
+        default_db_path = entry.data.get(CONF_DATABASE_PATH) or str(
+            Path(self.hass.config.path(".storage")) / DOMAIN / DB_FILENAME
+        )
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({
+                vol.Required(CONF_DATABASE_PATH, default=default_db_path): str,
+            }),
+            errors=errors,
+        )
 
     async def _async_validate_api_key(self, hass: HomeAssistant, api_key: str) -> bool:
         from .const import API_URL_BASE

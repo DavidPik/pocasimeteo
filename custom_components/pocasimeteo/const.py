@@ -34,6 +34,7 @@ DB_TABLE_SENSOR_METADATA = "sensor_metadata"
 
 CONF_STATION = "station_name"
 CONF_API_KEY = "api_key"
+CONF_DATABASE_PATH = "database_path"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_FORECAST_ENTITY_ID = "forecast_entity_id"
 CONF_SENSORS = "sensors"

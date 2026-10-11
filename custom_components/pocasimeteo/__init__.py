@@ -11,12 +11,19 @@ from homeassistant.core import (
     ServiceResponse,
     SupportsResponse,
 )
-from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
+from homeassistant.exceptions import ConfigEntryAuthFailed, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 import voluptuous as vol
 
-from .const import DOMAIN, SERVICE_GET_HISTORY, HISTORY_ACTION_VERSION
+from .const import (
+    DOMAIN,
+    SERVICE_GET_HISTORY,
+    HISTORY_ACTION_VERSION,
+    CONF_DATABASE_PATH,
+    SENSOR_DEFINITIONS,
+)
+from .database import PocasimeteoDatabase
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -93,7 +100,36 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PočasíMeteo from a config entry."""
+    database_path = entry.data.get(CONF_DATABASE_PATH)
+    if not isinstance(database_path, str) or not database_path.strip():
+        raise ConfigEntryAuthFailed(
+            "Není nastavena cesta k databázi PočasíMeteo."
+        )
+
+    database = PocasimeteoDatabase(hass, database_path=database_path)
+    try:
+        await database.async_open_and_validate()
+        await database.async_store_dataset(
+            station_id=entry.entry_id,
+            station_name=entry.title,
+            sensor_metadata=[
+                {
+                    "sensor_id": sensor_id,
+                    "sensor_name": metadata["name"],
+                    "sensor_type": metadata["sensor_type"],
+                }
+                for sensor_id, metadata in SENSOR_DEFINITIONS.items()
+            ],
+            measurements=[],
+        )
+    except Exception as err:
+        _LOGGER.exception("Databáze PočasíMeteo není dostupná nebo platná")
+        raise ConfigEntryAuthFailed(
+            f"Databázi PočasíMeteo nelze otevřít nebo obsahuje neplatná data: {err}"
+        ) from err
+
     coordinator = PocasimeteoDataUpdateCoordinator(hass, entry)
+    coordinator._pocasimeteo_database = database
     coordinator.register_delayed_startup()
     
     # 1. KROK: První refresh proběhne HNED. Stáhne se JSON, naplní se struktury 
