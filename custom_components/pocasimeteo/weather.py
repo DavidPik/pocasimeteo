@@ -10,9 +10,10 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
+    ATTR_DATABASE_DIAGNOSTICS,
     DOMAIN,
     SENSOR_DEFINITIONS,
-    API_TO_INTERNAL_MAPPING,
+    DEFAULT_SENSOR_OPTIONS,
     CONF_SENSORS,
     CONF_STATION,
 )
@@ -144,76 +145,65 @@ class PocasimeteoWeather(
     # -------------------------------------------------------------------------
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
+    def extra_state_attributes(self) -> dict[str, Any]:
         station_prefix = (
             self._entry.data.get(CONF_STATION).lower().strip().replace(" ", "_")
         )
+        sensor_options = self._entry.options.get(CONF_SENSORS, {})
         stats_dict = self.coordinator.station_metadata.get("sensor_stats", {})
 
         sensors_meta = []
-        for sid, meta in SENSOR_DEFINITIONS.items():
-            opts = self._entry.options.get(CONF_SENSORS, {}).get(sid, {})
-            if not opts.get("visible", meta.get("type") == "primary" or True):
-                continue
-
-            internal_sid = API_TO_INTERNAL_MAPPING.get(
-                meta["api_key"].lower(), meta["api_key"].lower()
+        for sensor_id, meta in SENSOR_DEFINITIONS.items():
+            options = sensor_options.get(
+                sensor_id, DEFAULT_SENSOR_OPTIONS.get(sensor_id, {})
             )
+            if not options.get("visible", True):
+                continue
 
             sensors_meta.append(
                 {
-                    "id": sid,
-                    "entity_id": f"sensor.{station_prefix}_{internal_sid}",
-                    "type": meta.get("type", "secondary"),
-                    "order": opts.get("order", meta.get("order", 999)),
+                    "id": sensor_id,
+                    "entity_id": f"sensor.{station_prefix}_{sensor_id}",
+                    "type": meta.get("sensor_type", "secondary"),
+                    "order": options.get("order", meta.get("order", 999)),
                     "visible": True,
-                    "graph_color": opts.get("color", meta.get("color", "#3b82f6")),
-                    "graph_style": opts.get("style", "smooth"),
+                    "graph_color": options.get(
+                        "color", meta.get("color", "#3b82f6")
+                    ),
+                    "graph_style": options.get("style", "smooth"),
                 }
             )
 
-        # Dynamické senzory
-        for sid, payload in self.coordinator.sensors_payload.items():
-            if sid not in SENSOR_DEFINITIONS and sid != "weather":
-                sensors_meta.append(
-                    {
-                        "id": sid,
-                        "entity_id": f"sensor.{station_prefix}_{sid}",
-                        "type": "secondary",
-                        "order": 99,
-                        "visible": True,
-                        "graph_color": "#3b82f6",
-                        "graph_style": "smooth",
-                    }
-                )
+        # Dynamické senzory už jsou v Coordinatoru vedené pod interním ID.
+        for sensor_id in self.coordinator.sensors_payload:
+            if sensor_id in SENSOR_DEFINITIONS or sensor_id == "weather":
+                continue
+            sensors_meta.append(
+                {
+                    "id": sensor_id,
+                    "entity_id": f"sensor.{station_prefix}_{sensor_id}",
+                    "type": "secondary",
+                    "order": 999,
+                    "visible": True,
+                    "graph_color": "#3b82f6",
+                    "graph_style": "smooth",
+                }
+            )
 
-        sensors_meta.sort(key=lambda x: x["order"])
+        sensors_meta.sort(key=lambda sensor: sensor["order"])
 
-        attributes = {
+        return {
             "srazky_den": self.coordinator.station_metadata.get("srazky_den", 0),
             "lokalita_stanice": self.coordinator.station_metadata.get(
                 "lokalita_stanice"
             ),
-            "webcamera_url": self.coordinator.station_metadata.get("webcamera_url"),
-            "statistics_interval": self.coordinator._statistics_interval,
-            "update_interval": (
-                self.coordinator.update_interval.total_seconds() // 60
-                if self.coordinator.update_interval
-                else 5
-            ),
             "timestamp": self.coordinator.station_metadata.get("api_timestamp"),
             "sensors": sensors_meta,
             "sensor_stats": stats_dict,
-            "history_missing_count": self.coordinator._diag_missing_count,
-            "history_queue_length": self.coordinator._diag_queue_length,
-            "history_worker_running": self.coordinator._diag_worker_running,
-            "history_last_write_ts": (
-                self.coordinator._diag_last_write_ts.isoformat()
-                if self.coordinator._diag_last_write_ts
-                else None
+            # Zachovává se kvůli současné kartě; karta jej používá pro období
+            # Recorder dotazu až do jejího přepnutí na get_history.
+            "statistics_interval": self.coordinator._statistics_interval,
+            ATTR_DATABASE_DIAGNOSTICS: self.coordinator.station_metadata.get(
+                ATTR_DATABASE_DIAGNOSTICS, {}
             ),
-            "history_last_batch_size": self.coordinator._diag_last_batch_size,
         }
-        # Dočasně nepublikujeme historii: velké atributy mohou překročit
-        # limit Recorderu Home Assistantu. Data zůstávají v coordinatoru.
-        return attributes
