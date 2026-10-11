@@ -584,18 +584,28 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             self._pocasimeteo_database = database
 
         results = []
+        query_started = time.perf_counter()
         for sensor_id, start, end in parsed_requests:
             # Use whole local-date boundaries for the indexed text query, then
             # filter exact requested wall times below. This also includes API
             # timestamps that carry a trailing Z or fractional seconds.
             query_start = start.strftime("%Y-%m-%dT00:00:00")
             query_end = end.strftime("%Y-%m-%dT23:59:59") + "\uffff"
-            stored_rows = await database.async_get_sensor_history(
-                self.entry.entry_id,
-                sensor_id,
-                query_start,
-                query_end,
-            )
+            try:
+                stored_rows = await database.async_get_sensor_history(
+                    self.entry.entry_id,
+                    sensor_id,
+                    query_start,
+                    query_end,
+                )
+            except Exception as err:
+                await self._async_update_database_diagnostics(
+                    database,
+                    operation="history_action",
+                    started_at=query_started,
+                    error=err,
+                )
+                raise
 
             rows = []
             for timestamp, value in stored_rows:
@@ -640,6 +650,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                 }
             )
 
+        await self._async_update_database_diagnostics(
+            database,
+            operation="history_action",
+            started_at=query_started,
+            result_count=sum(len(result["history"]) for result in results),
+        )
+        self.async_set_updated_data(self.data)
         return results
 
     def _build_database_dataset(
