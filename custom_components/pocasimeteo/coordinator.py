@@ -45,6 +45,7 @@ from .const import (
     BACKEND_HISTORY_VERSION,
     BACKEND_HISTORY_MAX_HOURS,
     ATTR_BACKEND_HISTORY,
+    ATTR_DATABASE_DIAGNOSTICS,
     get_dynamic_sensor_meta,
     API_TO_INTERNAL_MAPPING,
 )
@@ -282,11 +283,23 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         # Nová databázová větev zpracuje už normalizovaný výsledek stejného
         # API volání. Je oddělená od stávající Recorder větve a její chyba
         # nesmí zneplatnit aktuální data ani výsledek původního zpracování.
+        database_started = time.perf_counter()
+        database_error = None
         try:
             await self._async_store_normalized_history(normalized)
             await self._async_refresh_database_history(normalized)
-        except Exception:
+        except Exception as err:
+            database_error = err
             _LOGGER.exception("Nepodařilo se aktualizovat historii z vlastní databáze")
+
+        database = getattr(self, "_pocasimeteo_database", None)
+        if database is not None:
+            await self._async_update_database_diagnostics(
+                database,
+                operation="coordinator_refresh",
+                started_at=database_started,
+                error=database_error,
+            )
 
         return self.sensors_payload
 
@@ -311,6 +324,45 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
             sensor_metadata=sensor_metadata,
             measurements=measurements,
         )
+
+    async def _async_update_database_diagnostics(
+        self,
+        database: PocasimeteoDatabase,
+        *,
+        operation: str,
+        started_at: float,
+        error: Exception | None = None,
+        result_count: int | None = None,
+    ) -> None:
+        """Publish one compact diagnostic object for custom database activity."""
+        try:
+            snapshot = await database.async_get_diagnostics()
+        except Exception as diagnostic_error:
+            snapshot = {}
+            diagnostic_message = str(diagnostic_error)[:500]
+        else:
+            diagnostic_message = None
+
+        diagnostics = {
+            "backend": snapshot.get("backend", "unknown"),
+            "schema_version": snapshot.get("schema_version"),
+            "database_size_bytes": snapshot.get("database_size"),
+            "station_count": snapshot.get("station_count"),
+            "measurement_count": snapshot.get("measurement_count"),
+            "latest_measurement_timestamp": snapshot.get("last_insert"),
+            "last_operation": operation,
+            "last_operation_at": dt_util.now().isoformat(),
+            "last_operation_duration_ms": round(
+                (time.perf_counter() - started_at) * 1000, 2
+            ),
+            "last_error": str(error)[:500] if error is not None else None,
+        }
+        if result_count is not None:
+            diagnostics["last_result_count"] = result_count
+        if diagnostic_message is not None:
+            diagnostics["diagnostics_error"] = diagnostic_message
+
+        self.station_metadata[ATTR_DATABASE_DIAGNOSTICS] = diagnostics
 
     async def _async_refresh_database_history(self, normalized: dict) -> None:
         """Načte měsíční historii a statistiky z vlastní DB pro weather entitu."""
