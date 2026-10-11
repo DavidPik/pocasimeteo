@@ -199,11 +199,17 @@ class SQLiteDatabaseBackend:
                     )
 
             index = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='index' "
+                "SELECT name FROM sqlite_master WHERE type='index' "
                 "AND name='idx_measurements_lookup'"
             ).fetchone()
             if index is None:
                 raise RuntimeError("V databázi chybí index měření.")
+            index_columns = [
+                row[2]
+                for row in conn.execute(f"PRAGMA index_info({index[0]})")
+            ]
+            if index_columns != ["station_id", "sensor_id", "timestamp"]:
+                raise RuntimeError("Index měření má neplatnou strukturu.")
 
             unique_measurement_indexes = [
                 row[1]
