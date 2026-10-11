@@ -15,7 +15,6 @@ from .const import (
     API_TO_INTERNAL_MAPPING,
     CONF_SENSORS,
     CONF_STATION,
-    ATTR_BACKEND_HISTORY,
 )
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
@@ -215,7 +214,6 @@ class PocasimeteoWeather(
             ),
             "history_last_batch_size": self.coordinator._diag_last_batch_size,
         }
-        backend_history = self.coordinator.station_metadata.get("backend_history")
-        if backend_history is not None:
-            attributes[ATTR_BACKEND_HISTORY] = backend_history
+        # Dočasně nepublikujeme historii: velké atributy mohou překročit
+        # limit Recorderu Home Assistantu. Data zůstávají v coordinatoru.
         return attributes
