@@ -5,15 +5,91 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.typing import ConfigType
+import voluptuous as vol
 
-from .const import DOMAIN
+from .const import DOMAIN, SERVICE_GET_HISTORY, HISTORY_ACTION_VERSION
 from .coordinator import PocasimeteoDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[str] = ["weather", "sensor"]
+
+_HISTORY_REQUEST_SCHEMA = vol.Schema(
+    {
+        vol.Required("sensor_id"): str,
+        vol.Required("start"): str,
+        vol.Required("end"): str,
+    },
+    extra=vol.PREVENT_EXTRA,
+)
+_GET_HISTORY_SCHEMA = vol.Schema(
+    {
+        vol.Required("weather_entity_id"): str,
+        vol.Required("requests"): vol.All(
+            [_HISTORY_REQUEST_SCHEMA],
+            vol.Length(min=1),
+        ),
+    },
+    extra=vol.PREVENT_EXTRA,
+)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the response action independently of loaded config entries."""
+
+    async def async_get_history(call: ServiceCall) -> ServiceResponse:
+        weather_entity_id = call.data["weather_entity_id"]
+        entity_registry = er.async_get(hass)
+        coordinator = None
+
+        for entry_id, runtime_data in hass.data.get(DOMAIN, {}).items():
+            entry = runtime_data.get("entry")
+            candidate = runtime_data.get("coordinator")
+            if entry is None or candidate is None:
+                continue
+            registered_entity_id = entity_registry.async_get_entity_id(
+                "weather",
+                DOMAIN,
+                f"{entry_id}_weather",
+            )
+            if registered_entity_id == weather_entity_id:
+                coordinator = candidate
+                break
+
+        if coordinator is None:
+            raise ServiceValidationError(
+                f"Weather entita {weather_entity_id!r} nepatří k načtené "
+                "instanci integrace PočasíMeteo."
+            )
+
+        try:
+            sensor_results = await coordinator.async_get_history(call.data["requests"])
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
+
+        return {
+            "weather_entity_id": weather_entity_id,
+            "version": HISTORY_ACTION_VERSION,
+            "sensors": sensor_results,
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_HISTORY,
+        async_get_history,
+        schema=_GET_HISTORY_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up PočasíMeteo from a config entry."""
