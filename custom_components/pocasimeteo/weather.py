@@ -13,7 +13,6 @@ from .const import (
     ATTR_DATABASE_DIAGNOSTICS,
     DOMAIN,
     SENSOR_DEFINITIONS,
-    DEFAULT_SENSOR_OPTIONS,
     CONF_SENSORS,
     CONF_STATION,
 )
@@ -154,9 +153,7 @@ class PocasimeteoWeather(
 
         sensors_meta = []
         for sensor_id, meta in SENSOR_DEFINITIONS.items():
-            options = sensor_options.get(
-                sensor_id, DEFAULT_SENSOR_OPTIONS.get(sensor_id, {})
-            )
+            options = sensor_options.get(sensor_id, {})
             if not options.get("visible", True):
                 continue
 
@@ -164,7 +161,7 @@ class PocasimeteoWeather(
                 {
                     "id": sensor_id,
                     "entity_id": f"sensor.{station_prefix}_{sensor_id}",
-                    "type": meta.get("sensor_type", "secondary"),
+                    "type": meta.get("type", "secondary"),
                     "order": options.get("order", meta.get("order", 999)),
                     "visible": True,
                     "graph_color": options.get(
