@@ -64,6 +64,7 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
     Kompletní hromadný zápis celé dávky v jednom synchronním DB vlákně.
     Tato verze již NEPRACUJE s API klíči – používá přímo entity_id, hodnotu a timestamp.
     Bezpečně pracuje v jedné transakci, bez vnořených session.begin() bloků.
+    Zabrání neočekávanému autoflushu při SELECT a provede retry při sqlite zámku.
     """
     from sqlalchemy import select
     from sqlalchemy.exc import OperationalError
@@ -73,9 +74,11 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
         attr_id: int | None = None
 
         # 1) Přednačtení sdíleného prázdného JSON atributu (StateAttributes)
-        attr_rows = session.execute(
-            select(StateAttributes).where(StateAttributes.shared_attrs == "{}")
-        ).all()
+        # SELECT bez autoflushu, aby se nepokoušel flushnout pending States
+        with session.no_autoflush:
+            attr_rows = session.execute(
+                select(StateAttributes).where(StateAttributes.shared_attrs == "{}")
+            ).all()
 
         if attr_rows:
             attr_id = attr_rows[0][0].attributes_id
@@ -95,7 +98,15 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
                 continue
 
             # Převod času na float timestamp
-            utc_timestamp = ts.replace(tzinfo=None).timestamp()
+            # Pokud má ts tzinfo, převedeme na UTC epoch, jinak použijeme naive timestamp
+            try:
+                if getattr(ts, "tzinfo", None) is not None:
+                    utc_timestamp = ts.astimezone(tz=None).timestamp()
+                else:
+                    utc_timestamp = ts.replace(tzinfo=None).timestamp()
+            except Exception:
+                # Fallback: použijeme epoch podle naive datetu
+                utc_timestamp = ts.replace(tzinfo=None).timestamp()
 
             # Konverze hodnoty na float nebo string
             if value in (None, "", " ", "N/A", "--"):
@@ -112,9 +123,11 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
             # 3) Metadata (StatesMeta) – využití cache, jinak dohledání / vytvoření
             metadata_id = meta_cache.get(entity_id)
             if not metadata_id:
-                meta_rows = session.execute(
-                    select(StatesMeta).where(StatesMeta.entity_id == entity_id)
-                ).all()
+                # SELECT bez autoflushu, aby se nevyvolal flush pending States před dotazem
+                with session.no_autoflush:
+                    meta_rows = session.execute(
+                        select(StatesMeta).where(StatesMeta.entity_id == entity_id)
+                    ).all()
 
                 if meta_rows:
                     # pokud existuje více řádků, vezmeme první
@@ -137,12 +150,22 @@ def _insert_history_batch_sync_raw(session_factory, batch_points: list[dict]):
             )
             session.add(row)
 
-        # 5) Commit celé dávky s ošetřením zámku DB
-        try:
-            session.commit()
-        except OperationalError as err:
-            _LOGGER.error("PM-TRACE: HISTORY WRITE ERROR: %r", err)
-            session.rollback()
+        # 5) Commit celé dávky s retry a ošetřením zámku DB
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                session.commit()
+                return
+            except OperationalError as err:
+                _LOGGER.error("PM-TRACE: HISTORY WRITE ERROR: %r (attempt %d/%d)", err, attempt + 1, max_attempts)
+                session.rollback()
+                if attempt < max_attempts - 1:
+                    # krátké čekání před dalším pokusem (lineární backoff)
+                    time.sleep(0.25 * (attempt + 1))
+                    continue
+                # poslední pokus selhal — logujeme a končíme
+                _LOGGER.exception("PM-TRACE: HISTORY WRITE ERROR: final failure")
+                return
 
 # =========================================================================
 # HLAVN9 KOORDINÁTOR JE ODPOV2DN7 ZA AKTUALIZACE DAT Z API pocasimeteo.cz
@@ -268,7 +291,7 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         await self._process_and_import_dataset(history_norm, station_prefix)
 
          # Vždy se pokusíme spočítat statistiky z Recorderu,
-        # i když fronta není prázdná (budou založené na tom, co už v DB je)
+        # i když fronta isn't prázdná (budou založené na tom, co už v DB je)
         if self.sensors_payload:
             await self._update_recorder_statistics(self.sensors_payload)
 
@@ -750,6 +773,13 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
         samples = [normalized.get("current", {})]
         samples.extend(normalized.get("history", []))
 
+        # Unit conversions to store frontend-friendly units in DB
+        def _convert_for_db(sensor_id: str, numeric_value: float) -> float:
+            if sensor_id in ("vitr_rychlost", "vitr_narazy"):
+                # store wind in km/h in DB (frontend expects km/h)
+                return numeric_value * 3.6
+            return numeric_value
+
         for sample in samples:
             timestamp = sample.get("datum")
             if not timestamp:
@@ -765,6 +795,9 @@ class PocasimeteoDataUpdateCoordinator(DataUpdateCoordinator):
                     continue
                 if not math.isfinite(numeric_value):
                     continue
+
+                # apply unit conversions for DB storage
+                numeric_value = _convert_for_db(sensor_id, numeric_value)
 
                 measurements.append(
                     {
