@@ -1,0 +1,12 @@
+get_history:
+  description: "Vrátí historii senzorů z vlastní databáze PočasíMeteo."
+  fields:
+    weather_entity_id:
+      description: "Entity ID weather, pro které se požadavek vztahuje (např. weather.<stanice>)."
+      example: "weather.gar632"
+    requests:
+      description: "Seznam požadavků na senzory. Každý objekt obsahuje sensor_id, start a end (ISO řetězec lokálního wall-time)."
+      example:
+        - sensor_id: "teplota_vnejsi"
+          start: "2026-10-01T00:00:00"
+          end: "2026-10-02T00:00:00"
