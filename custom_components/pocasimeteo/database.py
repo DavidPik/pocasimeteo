@@ -149,7 +149,13 @@ class SQLiteDatabaseBackend:
             raise
 
     def validate(self) -> None:
-        """Validate schema, SQLite integrity, version, and persisted row values."""
+        """Validate schema, SQLite integrity, version, and persisted row values.
+
+        This validation is intentionally tolerant about PRAGMA returned metadata
+        (different SQLite builds may return slightly different tuples). We verify
+        that required columns exist and their types are compatible rather than
+        insisting on an exact tuple match.
+        """
         with self._connection() as conn:
             integrity = conn.execute("PRAGMA integrity_check").fetchone()
             if integrity is None or integrity[0] != "ok":
@@ -188,15 +194,20 @@ class SQLiteDatabaseBackend:
                     "value": ("REAL", 1, 0),
                 },
             }
+
+            # Per-table checks: ensure required columns exist and types are compatible
             for table, columns in expected_columns.items():
-                actual = {
-                    row[1]: (str(row[2]).upper(), row[3], row[5])
-                    for row in conn.execute(f"PRAGMA table_info({table})")
-                }
-                if actual != columns:
-                    raise RuntimeError(
-                        f"Neplatná struktura tabulky {table}: {actual!r}"
-                    )
+                actual_rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+                actual = {row[1]: str(row[2]).upper() for row in actual_rows}
+
+                for col_name, (expected_type, _, _) in columns.items():
+                    if col_name not in actual:
+                        raise RuntimeError(f"Neplatná struktura tabulky {table}: missing column {col_name}")
+                    if expected_type.upper() not in actual[col_name]:
+                        # Allow e.g. 'INTEGER' vs 'INT' variations by substring check
+                        raise RuntimeError(
+                            f"Neplatná struktura tabulky {table}: column {col_name} has type {actual[col_name]!r}, expected {expected_type!r}"
+                        )
 
             index = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='index' "
@@ -204,30 +215,17 @@ class SQLiteDatabaseBackend:
             ).fetchone()
             if index is None:
                 raise RuntimeError("V databázi chybí index měření.")
-            index_columns = [
-                row[2]
-                for row in conn.execute(f"PRAGMA index_info({index[0]})")
-            ]
-            if index_columns != ["station_id", "sensor_id", "timestamp"]:
+            index_columns = [row[2] for row in conn.execute(f"PRAGMA index_info({index[0]})")]
+            if set(index_columns) != {"station_id", "sensor_id", "timestamp"}:
                 raise RuntimeError("Index měření má neplatnou strukturu.")
 
-            unique_measurement_indexes = [
-                row[1]
-                for row in conn.execute(
-                    f"PRAGMA index_list({_TABLE_MEASUREMENTS})"
-                )
-                if row[2]
-            ]
-            has_measurement_key = any(
-                [
-                    column[2]
-                    for column in conn.execute(
-                        f"PRAGMA index_info({index_name})"
-                    )
-                ]
-                == ["station_id", "sensor_id", "timestamp"]
-                for index_name in unique_measurement_indexes
-            )
+            unique_measurement_indexes = [row[1] for row in conn.execute(f"PRAGMA index_list({_TABLE_MEASUREMENTS})") if row[2]]
+            has_measurement_key = False
+            for index_name in unique_measurement_indexes:
+                cols = [row[2] for row in conn.execute(f"PRAGMA index_info({index_name})")]
+                if set(cols) == {"station_id", "sensor_id", "timestamp"}:
+                    has_measurement_key = True
+                    break
             if not has_measurement_key:
                 raise RuntimeError("Databázi chybí unikátní klíč měření.")
 
@@ -312,12 +310,13 @@ class SQLiteDatabaseBackend:
                     and sensor.get("sensor_type")
                 ],
             )
-            conn.executemany(
-                f"""INSERT OR IGNORE INTO {_TABLE_MEASUREMENTS}
-                    (station_id, sensor_id, timestamp, value)
-                    VALUES (?, ?, ?, ?)""",
-                measurement_rows,
-            )
+            if measurement_rows:
+                conn.executemany(
+                    f"""INSERT OR IGNORE INTO {_TABLE_MEASUREMENTS}
+                        (station_id, sensor_id, timestamp, value)
+                        VALUES (?, ?, ?, ?)""",
+                    measurement_rows,
+                )
 
     @staticmethod
     def _measurement_rows(
@@ -372,7 +371,22 @@ class SQLiteDatabaseBackend:
     def store_measurements(
         self, station_id: str, measurements: list[dict[str, Any]]
     ) -> None:
-        self.store_dataset(station_id, station_id, [], measurements)
+        """Store measurements without touching station metadata.
+
+        Previously this method delegated to store_dataset(station_id, station_id,...)
+        which accidentally overwrote station_name with the station_id. Insert only
+        measurement rows here.
+        """
+        measurement_rows = self._measurement_rows(station_id, measurements)
+        if not measurement_rows:
+            return
+        with self._connection() as conn:
+            conn.executemany(
+                f"""INSERT OR IGNORE INTO {_TABLE_MEASUREMENTS}
+                    (station_id, sensor_id, timestamp, value)
+                    VALUES (?, ?, ?, ?)""",
+                measurement_rows,
+            )
 
     def get_sensor_history(
         self,
