@@ -38,6 +38,7 @@ CONF_DATABASE_PATH = "database_path"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_FORECAST_ENTITY_ID = "forecast_entity_id"
 CONF_SENSORS = "sensors"
+CONF_STATION_TIMEZONE = "station_timezone"
 
 CONF_STATISTICS_INTERVAL = "statistics_interval"
 
@@ -323,6 +324,7 @@ DEFAULT_OPTIONS = {
     CONF_FORECAST_ENTITY_ID: "",
     CONF_SENSORS: DEFAULT_SENSOR_OPTIONS,
     CONF_STATISTICS_INTERVAL: DEFAULT_STATISTICS_INTERVAL,
+    CONF_STATION_TIMEZONE: "",
 }
 
 # ============================================================
